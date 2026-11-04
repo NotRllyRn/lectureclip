@@ -4,6 +4,53 @@ import XCTest
 
 final class AudioPipelineTests: XCTestCase {
     @MainActor
+    func testNativeRateWindowsReadAllFramesAcrossChunkBoundaries() async throws {
+        for rate in [48_000.0, 44_100.0] {
+            let session = try SessionStore.create()
+            defer { try? FileManager.default.removeItem(at: SessionStore.directory(session.id)) }
+            let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2))
+            let writer = ChunkWriter(format: format, directory: SessionStore.directory(session.id)) { message in
+                XCTFail(message)
+            }
+            for _ in 0..<3 {
+                let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 96_256))
+                buffer.frameLength = 96_256
+                for channel in 0..<2 {
+                    let data = try XCTUnwrap(buffer.floatChannelData?[channel])
+                    for frame in 0..<96_256 { data[frame] = Float(frame % 1000) / 2000 }
+                }
+                writer.enqueue(buffer)
+                _ = try await writer.snapshot()
+            }
+            let snapshot = try SessionStore.snapshot(session.id)
+            let chunk = try XCTUnwrap(snapshot.chunks.first)
+            let file = try AVAudioFile(forReading: chunk.url)
+            // AVAudioFile can return 95,232 frames for this 95,488-frame request.
+            // Verify every sample, including the tail and a nonzero seek offset.
+            for first in [Int64(0), 137] {
+                let read = try AudioWindowReader.read(file, first: first, count: 95_488)
+                XCTAssertEqual(read.frameLength, 95_488)
+                for channel in 0..<2 {
+                    let data = try XCTUnwrap(read.floatChannelData?[channel])
+                    for frame in 0..<95_488 {
+                        XCTAssertEqual(data[frame], Float((frame + Int(first)) % 1000) / 2000)
+                    }
+                }
+            }
+            for start in [0.0, 1.234567] {
+                let samples = try AudioWindowReader.samples(snapshot: snapshot, start: start, end: 6)
+                XCTAssertEqual(Double(samples.count), (6 - start) * 16_000, accuracy: 6)
+                XCTAssertGreaterThan(samples.map { abs($0) }.reduce(0, +) / Float(samples.count), 0.1)
+            }
+            let gap = AudioSnapshot(chunks: Array(snapshot.chunks.dropFirst()), duration: snapshot.duration)
+            XCTAssertThrowsError(try AudioWindowReader.samples(snapshot: gap, start: 0, end: 6))
+            let truncated = AudioSnapshot(chunks: [AudioChunk(id: chunk.id, url: chunk.url, startFrame: 0,
+                frameCount: chunk.frameCount + 1000, sampleRate: rate)], duration: chunk.end + 1000 / rate)
+            XCTAssertThrowsError(try AudioWindowReader.samples(snapshot: truncated, start: 0, end: truncated.duration))
+        }
+    }
+
+    @MainActor
     func testRecordingTapAcceptsBackgroundAudioWithSpareCapacity() async throws {
         for interleaved in [false, true] {
             let session = try SessionStore.create()

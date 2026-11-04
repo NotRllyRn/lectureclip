@@ -45,3 +45,9 @@ Compiler inspection found that the original tap closure inherited MainActor isol
 The native regression test invokes the exact installed callback from a detached task, with spare buffer capacity in interleaved and non-interleaved stereo formats. Both cases passed, including persisted duration and sample-value checks; the existing CAF/M4A/TXT integration test also passed. A physical-device retest of build 2 is still required.
 
 To report a crash: Settings → Privacy & Security → Analytics & Improvements → Analytics Data → latest LectureClip entry → Share → Save to Files, then attach that `.ips` file. An IPA is an installer, not a log. If no LectureClip entry exists, check the nearest JetsamEvent entry for LectureClip (memory termination); share only the relevant report, not the entire analytics archive.
+
+## 1.0.2 saved-audio reader fix
+
+The user confirmed build 2 no longer crashes when recording starts, but transcription pauses with “Recorded audio is missing near 0.00 seconds.” A native reproduction demonstrated AVAudioFile returning 95,232 frames for a 95,488-frame request from a complete 48 kHz PCM file; the remaining 256 frames were available on the next read. The old transcription path incorrectly required a single read to fill the buffer.
+
+AudioWindowReader now accumulates short reads before resampling, computes frame boundaries independently, and reports premature EOF or inconsistent file metadata separately from a missing timeline interval. The model-independent regression checks every stereo sample at zero and nonzero offsets, reads/resamples six-second windows across sealed chunks at 48 kHz and 44.1 kHz, and rejects actual gaps and truncated files. All three audio pipeline tests passed on the iPad simulator with Xcode 27.2. Physical-device Parakeet transcription still requires retesting; no device diagnostic report was supplied for this incident.
