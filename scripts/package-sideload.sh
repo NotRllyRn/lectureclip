@@ -20,4 +20,5 @@ rm -f "$staging/Payload/LectureClip.app/embedded.mobileprovision"
 rm -f "$output"
 (cd "$staging" && /usr/bin/zip -qry "$output" Payload)
 unzip -tq "$output"
-shasum -a 256 "$output"
+(cd artifacts && shasum -a 256 LectureClip-Microphone-unsigned.ipa > SHA256SUMS)
+cat artifacts/SHA256SUMS

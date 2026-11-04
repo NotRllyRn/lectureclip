@@ -1,5 +1,7 @@
 name: iOS checks
 on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
 concurrency:
   group: ios-${{ github.ref }}
   cancel-in-progress: true
@@ -7,6 +9,8 @@ jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 45
+    outputs:
+      artifact: ${{ steps.sideload.outputs.artifact }}
     steps:
       - uses: actions/checkout@v5
       - name: Install XcodeGen
@@ -22,6 +26,30 @@ jobs:
             device_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; family=sys.argv[1]; print(next(d["udid"] for runtime,devices in json.load(sys.stdin)["devices"].items() if "iOS" in runtime for d in devices if family in d["name"]))' "$family")
             xcodebuild -project LectureClip.xcodeproj -scheme LectureClip -destination "platform=iOS Simulator,id=$device_id" -derivedDataPath DerivedData -resultBundlePath "Results-$family.xcresult" -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
           done
+      - name: Package SideStore IPA
+        id: sideload
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/package-sideload.sh
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' DerivedData-sideload/Build/Products/Release-iphoneos/LectureClip.app/Info.plist)
+          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' DerivedData-sideload/Build/Products/Release-iphoneos/LectureClip.app/Info.plist)
+          if [[ "$GITHUB_REF" == refs/tags/v* && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "Release tag must match app version v$version" >&2
+            exit 1
+          fi
+          echo "artifact=LectureClip-$version-build-$build-$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+      - name: Upload downloadable IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.sideload.outputs.artifact }}
+          path: |
+            artifacts/LectureClip-Microphone-unsigned.ipa
+            artifacts/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+          overwrite: true
       - name: Save simulator test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -29,3 +57,29 @@ jobs:
           name: simulator-results
           path: Results-*.xcresult
           if-no-files-found: ignore
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: artifacts
+      - name: Publish versioned download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd artifacts && sha256sum -c SHA256SUMS)
+          cat > release-notes.md <<'NOTES'
+          Download LectureClip-Microphone-unsigned.ipa below and install it with SideStore, AltStore, or Sideloadly. Update the existing app using the same account to preserve recordings and downloaded models.
+
+          Supports iPhone and iPad on iOS/iPadOS 26 or later. This unsigned, microphone-only build includes local Parakeet transcription, exports, and on-device summaries on supported devices. Cross-app system audio requires the separately provisioned App Groups build.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" artifacts/LectureClip-Microphone-unsigned.ipa artifacts/SHA256SUMS \
+            --verify-tag --title "LectureClip $GITHUB_REF_NAME" --notes-file release-notes.md

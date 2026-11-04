@@ -56,4 +56,14 @@ The supplied prototype's original documentation is preserved in [docs/PROTOTYPE.
 
 On a Mac, run `scripts/package-sideload.sh` to generate `artifacts/LectureClip-Microphone-unsigned.ipa`. This Release build supports both iPhone and iPad on iOS/iPadOS 26+, hides System audio, makes no App Group requests, and omits the broadcast extension. Microphone recording, Parakeet, export and supported on-device summaries remain included. It contains no Apple signing certificate or provisioning profile.
 
-Import the IPA into AltStore or Sideloadly and let that tool sign/install it using your own Apple account. Enter credentials only in your chosen tool. Free-account provisioning normally expires after seven days and must be refreshed; enable Developer Mode/trust the developer profile if iOS requests it. Installation and live capture still need verification on your physical devices. The full Xcode project retains ReplayKit support for a team with App Groups provisioning.
+Import the IPA into SideStore, AltStore, or Sideloadly and let that tool sign/install it using your own Apple account. Enter credentials only in your chosen tool. Free-account provisioning normally expires after seven days and must be refreshed; enable Developer Mode/trust the developer profile if iOS requests it. Installation and live capture still need verification on your physical devices. The full Xcode project retains ReplayKit support for a team with App Groups provisioning.
+
+
+## Download builds from GitHub
+
+- **Latest version:** [download the IPA](https://github.com/NotRllyRn/lectureclip/releases/latest/download/LectureClip-Microphone-unsigned.ipa) or browse [all releases](https://github.com/NotRllyRn/lectureclip/releases).
+- **Every successful CI build:** open [iOS checks](https://github.com/NotRllyRn/lectureclip/actions/workflows/ios.yml), select a completed run, and download its `LectureClip-<version>-build-<build>-<run ID>` artifact. Unzip it to get the IPA and SHA256SUMS. GitHub requires signing in to download Actions artifacts; these are retained for 90 days.
+
+CI packages the microphone-only Release IPA after core checks and iPhone/iPad simulator checks pass. Failed checks do not publish an installable build. Versioned releases retain their assets independently of the Actions artifact retention period.
+
+To publish a new version, update `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in `project.yml`, commit, then push a matching version tag (for example, `git tag v1.0.4 && git push origin v1.0.4`). The workflow verifies that the tag matches the built app version and publishes the IPA plus its checksum to GitHub Releases. Use a new version tag for each release; existing release assets are not silently replaced. Regular pushes and manual workflow runs still provide artifacts without a release tag.
