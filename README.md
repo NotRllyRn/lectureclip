@@ -7,11 +7,19 @@ A native SwiftUI app for **iPhone and iPad, iOS/iPadOS 26+**. Record lectures, t
 1. On a Mac, install full Xcode 26 or newer, open it and install the iOS SDK/simulator. Select it with `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` if necessary.
 2. Install [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`.
 3. Clone this repository, run `xcodegen generate`, then open `LectureClip.xcodeproj`.
-4. Select the LectureClip target, your signing team, and a unique bundle identifier. Connect your iPhone/iPad, enable Developer Mode if requested, select it as the run destination, and run.
+4. Select your signing team for **LectureClip and LectureClipBroadcast**. Configure unique bundle IDs and a shared App Group (see System audio below). Connect your iPhone/iPad, enable Developer Mode if requested, select it as the run destination, and run.
 5. Tap **Download / Retry Parakeet V3** while online. Model setup can take several minutes and substantial disk space. Once cached, recognition is local. Recording works before model setup finishes.
 6. Tap **New recording**, allow microphone access, and speak. The counter reports saved sample time, refreshed roughly every two seconds. Gray words are provisional. Stop to finalize the remaining transcript.
 
-A paid developer account is not required for local development signing, but free provisioning has Apple's limits. This repository does not contain a signed IPA or a TestFlight release.
+The full app uses an App Group and a broadcast extension, requiring an Apple Developer team with those provisioning capabilities. For microphone-only development with a Personal Team, remove the embedded LectureClipBroadcast dependency and App Group entitlement from the app target; system audio will be unavailable. This repository does not contain a signed IPA or TestFlight release.
+
+## System audio from other apps
+
+Select **System audio → Prepare system recording**, tap Apple's circular broadcast control, and confirm **Start Broadcast**. Then open Safari, Zoom, or your lecture app. Stop with the same broadcast control or the system recording indicator. Apple controls this visible consent flow; it cannot be replaced by a silent toggle. ReplayKit provides app-audio buffers; LectureClip discards video and microphone buffers. Protected content and some communication apps may block or omit audio.
+
+Before installing on a physical device, register one App Group and enable it for **both targets** in Signing & Capabilities. The example identifiers are `com.notrllyrn.LectureClip`, `com.notrllyrn.LectureClip.Broadcast`, and `group.com.notrllyrn.LectureClip`. If changed, update `project.yml`, both `.entitlements` files, and `Sources/BroadcastState.swift` to match your registered identifiers. Both targets must use the same team.
+
+The broadcast extension stores audio locally in the shared container; it never streams video/audio to a server. System-mode capture does not grant the main app continuous background execution for speech recognition. Return to LectureClip to catch up from saved audio. Pauses or periods without delivered audio do not advance the sample clock. Broadcast recording requires physical-device validation; a simulator launch test cannot prove cross-app capture.
 
 ## Export and recovery
 
@@ -20,7 +28,7 @@ A paid developer account is not required for local development signing, but free
 - Both workflows save M4A/TXT files in Documents/Exports. Clipboard support depends on the receiving app; **Share clip** and **Copy text** are fallbacks. Goodnotes may not accept an audio clipboard item.
 - The folder menu opens previous recordings. Relaunch recovers indexed, sealed CAF chunks and transcription/export progress. An unsealed tail can be lost on forced termination. Starting a new recording preserves prior sessions.
 - Files are accessible through Files/Finder sharing. No automatic retention policy deletes lectures. Do not edit or remove active session files while recording.
-- **Summarize saved transcript** uses Apple Foundation Models when Apple Intelligence is available. Summaries process the currently finalized transcript in bounded sections and are generated only after recording stops.
+- **Summarize saved transcript** uses Apple Foundation Models when Apple Intelligence is available. Summaries process the currently finalized transcript in bounded sections and are generated only after recording stops and transcription catches up.
 
 ## Architecture
 
@@ -37,7 +45,7 @@ The legacy `installTap` API copies incoming PCM buffers before handing them to t
 - GitHub Actions runs those checks and launch smoke tests on an iPhone and iPad simulator.
 - See [device acceptance tests](docs/TESTING.md) and [implementation plan](docs/PLAN.md).
 
-Background audio mode supports active microphone recording. It does not guarantee continuous Core ML execution. Approximately five seconds of transcription delay is a target requiring physical-device measurement, especially with Goodnotes foregrounded. The app never records other apps' internal audio. A simulator cannot establish battery, thermal, Neural Engine or sustained background behavior.
+Background audio mode supports active microphone recording. It does not guarantee continuous Core ML execution. Approximately five seconds of transcription delay is a target requiring physical-device measurement, especially with Goodnotes foregrounded. Microphone mode does not capture other apps' internal audio; System audio uses ReplayKit with explicit user consent. A simulator cannot establish battery, thermal, Neural Engine or sustained background behavior.
 
 Audio and transcripts remain local unless shared. First model setup downloads model assets from FluidAudio's model host. Seek permission before recording lectures.
 

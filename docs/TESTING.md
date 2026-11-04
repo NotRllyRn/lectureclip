@@ -15,3 +15,12 @@ Run on both iPhone and iPad. Core tests and simulator launch tests do not valida
 ## Execution record
 
 Native app build, simulator interaction, real microphone/Parakeet inference, Goodnotes integration and endurance testing require a Mac with full Xcode and enabled device access. Record only executed results here; source inspection is not a passing device test.
+
+## System-audio acceptance tests (physical device required)
+
+1. Provision the app and embedded broadcast extension with the same App Group. Select System audio, prepare, tap Apple's broadcast button and confirm Start Broadcast. Open Safari and play a non-protected lecture with known spoken content. Return, stop through the system controls, and verify actual exported audio and transcript.
+2. Speak near the device while recording system audio; verify the microphone is excluded. Conversely, select Microphone and verify it uses the microphone recording path.
+3. Confirm video is never stored and the extension does not download/load Parakeet. Test protected content separately; silence or unavailable audio is expected where iOS blocks capture.
+4. Cancel the broadcast-start sheet, cancel setup in the app, then select Microphone. Check that a stale prepared request cannot silently start a recording.
+5. Test pause/resume, route/format changes, extension termination, app relaunch during a live broadcast, and re-opening after more than 15 seconds without a heartbeat. Saved sealed chunks must remain exportable.
+6. Run the 60–90-minute endurance test with the lecture app foregrounded. System capture does not keep the main app alive for continuous ASR, so measure foreground catch-up separately from microphone-background latency.

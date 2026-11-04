@@ -51,7 +51,7 @@ struct ContentView: View {
                             }
                         }
                     } label: { Label("Saved lectures", systemImage: "folder") }
-                    .disabled(store.isRecording || store.isBusy || store.exporting || store.summarizing)
+                    .disabled(store.isRecording || store.broadcastPrepared || store.isBusy || store.exporting || store.summarizing)
                 }
             }
             .sheet(isPresented: $showingAdvanced) {
@@ -71,24 +71,40 @@ struct ContentView: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Picker("Audio source", selection: $store.source) {
+                ForEach(RecordingSource.allCases) { source in Text(source.title).tag(source) }
+            }
+            .pickerStyle(.segmented)
+            .disabled(store.isRecording || store.broadcastPrepared || store.isBusy || store.exporting || store.summarizing)
             HStack {
                 Label(store.isRecording ? "Recording" : "Saved audio", systemImage: store.isRecording ? "record.circle.fill" : "waveform")
                     .foregroundStyle(store.isRecording ? Color.red : Color.primary)
                 Spacer()
                 Text(clockString(store.snapshot.duration)).font(.title2.monospacedDigit())
             }
+            if store.source == .systemAudio && store.broadcastPrepared {
+                HStack {
+                    BroadcastPicker().frame(width: 60, height: 60)
+                    Text("Tap to start or stop screen broadcast. Only app audio is saved; protected audio may be unavailable.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if !store.isRecording {
+                    Button("Cancel broadcast setup") { store.cancelBroadcastSetup() }.font(.caption)
+                }
+            } else {
             Button {
                 Task {
                     if store.isRecording { await store.stopRecording() }
                     else { await store.startRecording() }
                 }
             } label: {
-                Label(store.isRecording ? "Stop recording" : "New recording", systemImage: store.isRecording ? "stop.fill" : "mic.fill")
+                Label(store.isRecording ? "Stop recording" : (store.source == .systemAudio ? "Prepare system recording" : "New recording"), systemImage: store.isRecording ? "stop.fill" : "mic.fill")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .disabled(store.isBusy || store.exporting || store.summarizing)
             .accessibilityIdentifier("recordButton")
+            }
             Text(store.transcriptionStatus).font(.caption).foregroundStyle(.secondary)
             if !store.modelReady {
                 Button(store.preparingModel ? "Preparing model…" : "Download / Retry Parakeet V3") {

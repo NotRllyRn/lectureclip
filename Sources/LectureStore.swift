@@ -4,6 +4,8 @@ import FoundationModels
 
 @MainActor
 final class LectureStore: ObservableObject {
+    @Published var source: RecordingSource = .microphone
+    @Published private(set) var broadcastPrepared = false
     @Published private(set) var session: LectureSession?
     @Published private(set) var sessions: [LectureSession] = []
     @Published private(set) var snapshot = AudioSnapshot(chunks: [], duration: 0)
@@ -36,10 +38,18 @@ final class LectureStore: ObservableObject {
         }
         do {
             sessions = try SessionStore.list()
-            if let latest = sessions.first {
+            let broadcast = try? BroadcastStorage.read(BroadcastStatus.self, name: "status.json")
+            let latest = broadcast.flatMap { state in state.isLive ? sessions.first(where: { $0.id == state.sessionID }) : nil } ?? sessions.first
+            if let latest {
                 session = latest
                 snapshot = try SessionStore.snapshot(latest.id)
+                source = latest.source ?? .microphone
                 status = "Recovered saved audio. Recording is stopped."
+                if source == .systemAudio, let broadcast, broadcast.sessionID == latest.id, broadcast.isLive {
+                    isRecording = true
+                    broadcastPrepared = true
+                    watchBroadcast(id: latest.id)
+                }
             }
         } catch { errorMessage = error.localizedDescription }
     }
@@ -58,10 +68,12 @@ final class LectureStore: ObservableObject {
     }
 
     func startRecording() async {
-        guard !isBusy, !exporting, !summarizing else { return }
+        guard !isBusy, !exporting, !summarizing, !isRecording else { return }
+        if source == .systemAudio { await prepareBroadcast(); return }
         isBusy = true
         defer { isBusy = false }
         await cancelRecognition()
+        monitor?.cancel()
         do {
             let newSession = try SessionStore.create()
             sessions = try SessionStore.list()
@@ -69,6 +81,7 @@ final class LectureStore: ObservableObject {
             session = newSession
             snapshot = AudioSnapshot(chunks: [], duration: 0)
             lastClip = nil
+            broadcastPrepared = false
             isRecording = true
             status = "Recording. Audio is saved independently of transcription."
             monitor = Task { [weak self] in
@@ -92,6 +105,10 @@ final class LectureStore: ObservableObject {
 
     func stopRecording() async {
         guard isRecording else { return }
+        if session?.source == .systemAudio {
+            status = "Stop using the screen-broadcast button or the system recording indicator."
+            return
+        }
         isBusy = true
         defer { isBusy = false }
         isRecording = false
@@ -107,7 +124,7 @@ final class LectureStore: ObservableObject {
     }
 
     func open(_ saved: LectureSession) async {
-        guard !isRecording, !isBusy, !exporting, !summarizing else { return }
+        guard !isRecording, !broadcastPrepared, !isBusy, !exporting, !summarizing else { return }
         isBusy = true
         defer { isBusy = false }
         await cancelRecognition()
@@ -116,10 +133,69 @@ final class LectureStore: ObservableObject {
             guard let fresh = sessions.first(where: { $0.id == saved.id }) else { return }
             snapshot = try SessionStore.snapshot(fresh.id)
             session = fresh
+            source = fresh.source ?? .microphone
+            broadcastPrepared = false
+            monitor?.cancel()
             lastClip = nil
             status = "Opened saved lecture."
             startRecognition()
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func prepareBroadcast() async {
+        isBusy = true
+        defer { isBusy = false }
+        await cancelRecognition()
+        monitor?.cancel()
+        do {
+            let newSession = try SessionStore.create(source: .systemAudio)
+            try BroadcastStorage.write(BroadcastRequest(sessionID: newSession.id), name: "request.json")
+            session = newSession
+            snapshot = AudioSnapshot(chunks: [], duration: 0)
+            sessions = try SessionStore.list()
+            lastClip = nil
+            broadcastPrepared = true
+            status = "Ready. Tap the broadcast button, then Start Broadcast. Open your lecture app. Video is discarded."
+            watchBroadcast(id: newSession.id)
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func cancelBroadcastSetup() {
+        guard !isRecording, let id = session?.id else { return }
+        if let state = try? BroadcastStorage.read(BroadcastStatus.self, name: "status.json"), state.sessionID == id, state.isLive {
+            isRecording = true
+            return
+        }
+        do {
+            if let container = BroadcastStorage.container {
+                try FileManager.default.removeItem(at: container.appendingPathComponent("request.json"))
+            }
+            monitor?.cancel()
+            broadcastPrepared = false
+            status = "Broadcast setup cancelled."
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func watchBroadcast(id: UUID) {
+        monitor?.cancel()
+        monitor = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.session?.id == id else { return }
+                do {
+                    if let state = try? BroadcastStorage.read(BroadcastStatus.self, name: "status.json"), state.sessionID == id {
+                        self.snapshot = try SessionStore.snapshot(id)
+                        self.isRecording = state.isLive
+                        self.status = state.message ?? (state.isLive
+                            ? "System audio recording. Stop through the system broadcast controls."
+                            : "Broadcast stopped or interrupted. Saved system audio is available.")
+                        self.startRecognition()
+                        if !state.isLive { self.broadcastPrepared = false; return }
+                    }
+                    try await Task.sleep(for: .seconds(2))
+                } catch is CancellationError { return }
+                catch { self.errorMessage = error.localizedDescription; return }
+            }
+        }
     }
 
     private func cancelRecognition() async {
@@ -168,7 +244,9 @@ final class LectureStore: ObservableObject {
         exporting = true
         defer { exporting = false }
         do {
-            if isRecording { snapshot = try await recorder.snapshotForExport() }
+            if isRecording {
+                snapshot = session?.source == .systemAudio ? try SessionStore.snapshot(id) : try await recorder.snapshotForExport()
+            }
             guard let current = session else { return }
             let quick = start == nil
             let range = try quick ? current.timeline.quickRange(recordedThrough: snapshot.duration)

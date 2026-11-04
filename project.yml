@@ -16,10 +16,12 @@ targets:
     platform: iOS
     sources:
       - path: Sources
-        excludes: [Info.plist]
+        excludes: [Info.plist, LectureClip.entitlements]
       - path: Core
     dependencies:
       - package: FluidAudio
+      - target: LectureClipBroadcast
+        embed: true
     info:
       path: Sources/Info.plist
       properties:
@@ -34,6 +36,25 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.notrllyrn.LectureClip
         PRODUCT_NAME: LectureClip
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: Sources/LectureClip.entitlements
+  LectureClipBroadcast:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: BroadcastExtension
+        excludes: [Info.plist, Broadcast.entitlements]
+      - path: Core
+      - path: Sources/ChunkWriter.swift
+      - path: Sources/SessionStore.swift
+      - path: Sources/BroadcastState.swift
+    info:
+      path: BroadcastExtension/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.notrllyrn.LectureClip.Broadcast
+        CODE_SIGN_ENTITLEMENTS: BroadcastExtension/Broadcast.entitlements
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
   LectureClipUITests:
     type: bundle.ui-testing
     platform: iOS

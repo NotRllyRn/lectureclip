@@ -28,3 +28,7 @@ Audio capture does not wait for model download or inference. Disk errors and que
 ## Validation constraints
 
 This Linux host has neither Swift nor Xcode. T3 device_open(platform: ios) returned: “Agent device access is turned off for this environment.” Native simulator and physical-device claims require subsequent execution on a connected Mac. Five-second delay, Goodnotes background behavior, clipboard compatibility, battery, thermal and memory behavior are acceptance tests, not guarantees.
+
+## Added scope: system audio
+
+User requested a microphone/system-audio toggle and confirmed capture from other apps. Use ReplayKit's broadcast upload extension with an explicit system broadcast picker; AVAudioEngine cannot capture another app's output. The extension writes only audioApp PCM buffers through the shared bounded ChunkWriter. It discards video and audioMic buffers, publishes a heartbeat and seals audio into an App Group. The main app reads shared chunks and catches up transcription when it can execute. Model inference never runs in the memory-limited extension. System broadcast controls stop capture; there is no hidden programmatic start/stop. Stale heartbeats expose saved data after interrupted broadcasts.

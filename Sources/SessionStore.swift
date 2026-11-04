@@ -5,6 +5,7 @@ struct LectureSession: Codable, Identifiable, Sendable {
     var createdAt: Date
     var timeline = TranscriptTimeline()
     var summary: String?
+    var source: RecordingSource?
 }
 
 enum SessionStore {
@@ -13,11 +14,19 @@ enum SessionStore {
             .appendingPathComponent("Lectures", isDirectory: true)
     }
 
-    static func directory(_ id: UUID) -> URL { root.appendingPathComponent(id.uuidString, isDirectory: true) }
+    static var sharedRoot: URL? { BroadcastStorage.container?.appendingPathComponent("Lectures", isDirectory: true) }
 
-    static func create() throws -> LectureSession {
-        let session = LectureSession(id: UUID(), createdAt: Date())
-        try FileManager.default.createDirectory(at: directory(session.id), withIntermediateDirectories: true,
+    static func directory(_ id: UUID) -> URL {
+        let local = root.appendingPathComponent(id.uuidString, isDirectory: true)
+        if FileManager.default.fileExists(atPath: local.path) { return local }
+        return sharedRoot?.appendingPathComponent(id.uuidString, isDirectory: true) ?? local
+    }
+
+    static func create(source: RecordingSource = .microphone) throws -> LectureSession {
+        if source == .systemAudio && sharedRoot == nil { throw BroadcastError.unavailableGroup }
+        let session = LectureSession(id: UUID(), createdAt: Date(), source: source)
+        let folder = (source == .systemAudio ? sharedRoot! : root).appendingPathComponent(session.id.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
             attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
         try save(session)
         return session
@@ -28,8 +37,9 @@ enum SessionStore {
     }
 
     static func list() throws -> [LectureSession] {
-        guard FileManager.default.fileExists(atPath: root.path) else { return [] }
-        return try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+        try ([root] + [sharedRoot].compactMap { $0 })
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+            .flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }
             .filter { $0.hasDirectoryPath }
             .map { try JSONDecoder().decode(LectureSession.self, from: Data(contentsOf: $0.appendingPathComponent("session.json"))) }
             .sorted { $0.createdAt > $1.createdAt }
