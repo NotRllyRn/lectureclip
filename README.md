@@ -95,3 +95,23 @@ To make a reusable personal shortcut:
 Use it while the device is unlocked. Background execution is supported by the action, but iOS controls automation permissions, execution time, and whether it launches an app that was force-quit. If iOS cancels or refuses execution before the action completes, Shortcuts may report a system error instead of receiving a Boolean. Very long pending exports and pasting into other apps need physical-device testing; receiving apps still decide which clipboard formats they accept.
 
 Apple references: [App Intent execution modes](https://developer.apple.com/documentation/appintents/appintent/supportedmodes), [creating an App Intent](https://developer.apple.com/documentation/appintents/creating-your-first-app-intent), and [App Shortcuts providers](https://developer.apple.com/documentation/appintents/appshortcutsprovider).
+
+## Recording controls and state shortcuts
+
+The app now shows **Continue recording** beside **New recording** whenever a microphone lecture is paused. **Stop recording** stops capture and leaves that lecture paused. Continue appends to the same lecture, preserving its name, original date, words, summary, clips, and Quick Export cursor. Time spent paused is excluded from the audio timeline. New recording creates a separate lecture. Previously saved microphone lectures can also be opened and continued.
+
+Five more actions are available under **Shortcuts → Apps → LectureClip**, alongside Quick Export and Copy:
+
+| Action | Boolean result |
+| --- | --- |
+| Start New Recording | True when a new microphone lecture starts; false if busy, already active, permission is missing, or capture fails. |
+| Stop Recording | True when microphone capture stops and its paused state/audio are saved; false if there is no active microphone recording or the stop/save fails. |
+| Resume Recording | True when the selected or last-selected microphone lecture resumes; false if none is selected, it is already active, or capture is unavailable. |
+| Is Recording Active | True while LectureClip is capturing audio; false while paused or idle. |
+| Is Recording Paused | True for the selected paused lecture; false while recording, transitioning, or when no paused lecture is selected. |
+
+Start, Stop, and Resume adopt Apple's [AudioRecordingIntent](https://developer.apple.com/documentation/appintents/audiorecordingintent) and request background execution. First grant microphone permission by recording in the app. Start/Resume require an unlocked device and do not try to present a permission prompt in the background. iOS may still reject activation in some contexts; the action returns false and records a diagnostic. Background microphone initiation through SideStore needs device validation.
+
+The state checks are read-only App Intents and do not request microphone access or start recording. After an app termination, a selected microphone lecture is recovered as paused, never falsely reported as actively capturing audio. The full App Groups build also reflects a live ReplayKit broadcast's active/paused phase in state checks, but controlling that broadcast still requires Apple's broadcast controls; these new Start/Stop/Resume actions control microphone recordings.
+
+If transcription was previously enabled, starting/continuing also attempts to load the saved speech model and transcribe while recording. Recording succeeds independently of model loading. Automatic summaries can refresh again after each subsequent pause and catch-up. An automation can use **Is Recording Paused → If true: Resume Recording; Otherwise, if not active: Start New Recording**. All six LectureClip actions return Boolean values that other shortcuts can use.
