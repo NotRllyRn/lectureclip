@@ -28,7 +28,7 @@ The broadcast extension stores audio locally in the shared container; it never s
 - Both workflows save M4A/TXT files in Documents/Exports. Clipboard support depends on the receiving app; **Share clip** and **Copy text** are fallbacks. Goodnotes may not accept an audio clipboard item.
 - The folder menu opens previous recordings. Relaunch recovers indexed, sealed CAF chunks and transcription/export progress. An unsealed tail can be lost on forced termination. Starting a new recording preserves prior sessions.
 - Files are accessible through Files/Finder sharing. No automatic retention policy deletes lectures. Do not edit or remove active session files while recording.
-- **Summarize saved transcript** uses Apple Foundation Models when Apple Intelligence is available. Summaries process the currently finalized transcript in bounded sections and are generated only after recording stops and transcription catches up.
+- **Notes & titles** uses Apple Foundation Models when Apple Intelligence is available. Opening notes are generated automatically after about two minutes of finalized transcription, and the summary refreshes after stop/catch-up. Manual generation is also available.
 
 ## Architecture
 
@@ -67,3 +67,13 @@ Import the IPA into SideStore, AltStore, or Sideloadly and let that tool sign/in
 CI packages the microphone-only Release IPA after core checks and iPhone/iPad simulator checks pass. Failed checks do not publish an installable build. Versioned releases retain their assets independently of the Actions artifact retention period.
 
 To publish a new version, update `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in `project.yml`, commit, then push a matching version tag (for example, `git tag v1.0.4 && git push origin v1.0.4`). The workflow verifies that the tag matches the built app version and publishes the IPA plus its checksum to GitHub Releases. Use a new version tag for each release; existing release assets are not silently replaced. Regular pushes and manual workflow runs still provide artifacts without a release tag.
+
+## Recording names and automatic notes
+
+Use the pencil beside the current recording's name to **Name / Rename recording** or **Regenerate recording title**. The recording date and time remain visible under the name and in Saved lectures. Manual names are preserved when automatic notes finish generating.
+
+With Apple Intelligence enabled and its model available, LectureClip automatically creates an opening title and summary after approximately two minutes of finalized transcription. It refreshes the summary once recording stops and transcription finishes; shorter recordings get their first notes then. Automatic generation starts while the app is active, and resumes checking when you return. It does not wait for notes to finish before allowing you to stop recording. Summaries show which transcript timestamp they cover.
+
+Open **Notes & titles → Generate / Refresh notes** to generate notes sooner, refresh them, or retry a failure. Without Apple Intelligence, recording, transcription, exports, and manual naming continue to work. Generated titles and summaries should be checked for accuracy.
+
+New exports appear under **Saved clips** for their lecture, including after relaunch. Select a clip, then use **Notes & titles → Regenerate clip title** to generate a name from that clip's transcript and rename its M4A/TXT files. Clips exported before this feature remain available in Files → LectureClip → Exports.
