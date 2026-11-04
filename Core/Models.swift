@@ -32,9 +32,11 @@ struct AudioSnapshot: Sendable {
     let duration: TimeInterval
 }
 
-struct ExportedClip: Sendable {
-    let audioURL: URL
-    let transcriptURL: URL
+struct ExportedClip: Identifiable, Codable, Sendable {
+    var id = UUID()
+    var title: String?
+    var audioURL: URL
+    var transcriptURL: URL
     let text: String
     let start: TimeInterval
     let end: TimeInterval

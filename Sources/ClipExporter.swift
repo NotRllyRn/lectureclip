@@ -6,7 +6,7 @@ struct ClipExporter {
     /// Export any continuous time range using ONLY finalized chunks. Recording
     /// remains active in the recorder during this whole operation.
     static func export(start: TimeInterval, end: TimeInterval,
-                       words: [TranscriptWord], chunks: [AudioChunk]) async throws -> ExportedClip {
+                       words: [TranscriptWord], chunks: [AudioChunk], title: String? = nil) async throws -> ExportedClip {
         guard start >= 0, end - start >= 0.025 else { throw ClipError.invalidRange }
         let sorted = chunks.sorted { $0.start < $1.start }
         guard !sorted.isEmpty else { throw ClipError.missingAudio(at: start) }
@@ -45,7 +45,7 @@ struct ClipExporter {
         )[0].appendingPathComponent("Exports", isDirectory: true)
         try FileManager.default.createDirectory(at: outputDirectory,
                                                 withIntermediateDirectories: true)
-        let name = "lecture_\(UUID().uuidString.prefix(8))"
+        let name = fileName(for: title ?? "Lecture clip")
         let audioURL = outputDirectory.appendingPathComponent(name + ".m4a")
         let transcriptURL = outputDirectory.appendingPathComponent(name + ".txt")
         guard let session = AVAssetExportSession(
@@ -63,7 +63,36 @@ struct ClipExporter {
             try? FileManager.default.removeItem(at: audioURL)
             throw error
         }
-        return ExportedClip(audioURL: audioURL, transcriptURL: transcriptURL,
+        return ExportedClip(title: title, audioURL: audioURL, transcriptURL: transcriptURL,
                             text: transcriptText, start: start, end: end)
     }
+
+    private static func fileName(for title: String) -> String {
+        let safe = title.components(separatedBy: CharacterSet.alphanumerics.union(.whitespaces).inverted)
+            .filter { !$0.isEmpty }.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(String((safe.isEmpty ? "Lecture clip" : safe).prefix(70)))-\(UUID().uuidString.prefix(8))"
+    }
+
+    /// Copy first so a failed session save can roll back without losing the original clip.
+    static func retitled(_ clip: ExportedClip, title: String) throws -> ExportedClip {
+        let name = fileName(for: title)
+        var updated = clip
+        updated.title = title
+        updated.audioURL = clip.audioURL.deletingLastPathComponent().appendingPathComponent(name + ".m4a")
+        updated.transcriptURL = clip.transcriptURL.deletingLastPathComponent().appendingPathComponent(name + ".txt")
+        do {
+            try FileManager.default.copyItem(at: clip.audioURL, to: updated.audioURL)
+            try FileManager.default.copyItem(at: clip.transcriptURL, to: updated.transcriptURL)
+            return updated
+        } catch {
+            removeFiles(updated)
+            throw error
+        }
+    }
+
+    static func removeFiles(_ clip: ExportedClip) {
+        try? FileManager.default.removeItem(at: clip.audioURL)
+        try? FileManager.default.removeItem(at: clip.transcriptURL)
+    }
+
 }

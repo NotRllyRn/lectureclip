@@ -6,6 +6,7 @@ struct TranscriptView: View {
     let duration: Double
     let status: String
     let summary: String?
+    var summaryThrough: Double? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -28,6 +29,10 @@ struct TranscriptView: View {
                     if let summary {
                         Divider()
                         Text("Study summary").font(.headline)
+                        if let summaryThrough {
+                            Text("Based on transcript through \(clockString(summaryThrough))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         Text(summary).textSelection(.enabled)
                         Text("Generated on device. Check against your transcript.").font(.caption).foregroundStyle(.secondary)
                     }

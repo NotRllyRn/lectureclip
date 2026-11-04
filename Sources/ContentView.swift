@@ -5,6 +5,9 @@ struct ContentView: View {
     @StateObject private var store = LectureStore()
     @Environment(\.scenePhase) private var scenePhase
     @State private var showingAdvanced = false
+    @State private var showingLectures = false
+    @State private var editingName = false
+    @State private var recordingName = ""
 
     var body: some View {
         NavigationStack {
@@ -13,7 +16,7 @@ struct ContentView: View {
                 Divider()
                 TranscriptView(words: store.words, finalizedThrough: store.finalizedThrough,
                                duration: store.snapshot.duration, status: store.transcriptionStatus,
-                               summary: store.session?.summary)
+                               summary: store.session?.summary, summaryThrough: store.session?.summaryThrough)
                 Divider()
                 exports.padding()
             }
@@ -32,15 +35,12 @@ struct ContentView: View {
                     } label: { Label("Diagnostics", systemImage: "stethoscope") }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        ForEach(store.sessions) { session in
-                            Button(session.createdAt.formatted(date: .abbreviated, time: .shortened)) {
-                                Task { await store.open(session) }
-                            }
-                        }
-                    } label: { Label("Saved lectures", systemImage: "folder") }
+                    Button { showingLectures = true } label: { Label("Saved lectures", systemImage: "folder") }
                     .disabled(store.isRecording || store.broadcastPrepared || store.isBusy || store.exporting || store.summarizing)
                 }
+            }
+            .sheet(isPresented: $showingLectures) {
+                SavedLecturesView(sessions: store.sessions) { saved in Task { await store.open(saved) } }
             }
             .sheet(isPresented: $showingAdvanced) {
                 AdvancedExportView(words: store.words.filter(\.isFinal), duration: store.snapshot.duration) { start, end in
@@ -48,11 +48,18 @@ struct ContentView: View {
                     Task { await store.export(start: start, end: end) }
                 }
             }
+            .alert("Name recording", isPresented: $editingName) {
+                TextField("Lecture name", text: $recordingName)
+                Button("Save") { store.renameRecording(recordingName) }
+                    .disabled(recordingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Cancel", role: .cancel) { }
+            }
+            .task { store.startAutomaticNotes() }
             .alert("LectureClip", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
                 Button("OK", role: .cancel) { store.errorMessage = nil }
             } message: { Text(store.errorMessage ?? "") }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { store.startRecognition() }
+                if phase == .active { store.startRecognition(); store.startAutomaticNotes() }
             }
         }
     }
@@ -65,6 +72,24 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .disabled(store.isRecording || store.broadcastPrepared || store.isBusy || store.exporting || store.summarizing)
+            }
+            if let session = store.session {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(session.displayTitle).font(.headline).lineLimit(2)
+                        Text(session.createdAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Menu {
+                        Button("Name / Rename recording") {
+                            recordingName = session.title ?? ""
+                            editingName = true
+                        }
+                        Button("Regenerate recording title") { Task { await store.regenerateRecordingTitle() } }
+                            .disabled(store.summarizing || !store.words.contains(where: \.isFinal))
+                    } label: { Label("Recording name", systemImage: "pencil").labelStyle(.iconOnly) }
+                }
             }
             HStack {
                 Label(store.isRecording ? "Recording" : "Saved audio", systemImage: store.isRecording ? "record.circle.fill" : "waveform")
@@ -92,7 +117,7 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(store.isBusy || store.exporting || store.summarizing)
+            .disabled(store.isBusy || store.exporting || (store.summarizing && !store.isRecording))
             .accessibilityIdentifier("recordButton")
             }
             Text(store.transcriptionStatus).font(.caption).foregroundStyle(.secondary)
@@ -117,16 +142,31 @@ struct ContentView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Text(store.status).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("exportStatus")
+            HStack {
+                Menu {
+                    Text(store.notesStatus)
+                    Button("Generate / Refresh notes") { Task { await store.summarize() } }
+                        .disabled(store.summarizing || store.isBusy || !store.words.contains(where: \.isFinal))
+                    Button("Regenerate clip title") { Task { await store.regenerateClipTitle() } }
+                        .disabled(store.summarizing || store.exporting || store.lastClip?.text.isEmpty != false)
+                } label: { Label(store.summarizing ? "Generating…" : "Notes & titles", systemImage: "sparkles") }
+                Spacer()
+                if let clips = store.session?.clips, !clips.isEmpty {
+                    Menu {
+                        ForEach(clips) { clip in
+                            Button(clip.title ?? "Clip \(clockString(clip.start))–\(clockString(clip.end))") { store.selectClip(clip) }
+                        }
+                    } label: { Label("Saved clips (\(clips.count))", systemImage: "waveform") }
+                }
+            }.font(.footnote)
             if let clip = store.lastClip {
+                Text(clip.title ?? "Lecture clip").font(.subheadline).lineLimit(1)
                 HStack {
                     ShareLink(items: [clip.audioURL, clip.transcriptURL]) { Label("Share clip", systemImage: "square.and.arrow.up") }
                     Spacer()
                     Button("Copy text") { UIPasteboard.general.string = clip.text }
                 }.font(.footnote)
             }
-            Button(store.summarizing ? "Summarizing…" : "Summarize saved transcript") { Task { await store.summarize() } }
-                .font(.footnote)
-                .disabled(store.isRecording || store.summarizing || store.isBusy || store.snapshot.duration - store.finalizedThrough >= 0.025 || !store.words.contains(where: \.isFinal))
         }
     }
 

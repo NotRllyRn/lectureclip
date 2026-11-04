@@ -6,6 +6,32 @@ struct LectureSession: Codable, Identifiable, Sendable {
     var timeline = TranscriptTimeline()
     var summary: String?
     var source: RecordingSource?
+    var title: String?
+    var titleIsManual: Bool?
+    var summaryThrough: Double?
+    var clips: [ExportedClip]?
+
+    var displayTitle: String { title?.isEmpty == false ? title! : "Untitled lecture" }
+
+    enum NotesStage { case opening, complete }
+
+    func automaticNotesStage(isRecording: Bool, recordedThrough: Double) -> NotesStage? {
+        if !isRecording, recordedThrough - timeline.finalizedThrough < 0.025,
+           (summaryThrough ?? -1) < timeline.finalizedThrough - 0.025 { return .complete }
+        if summaryThrough == nil, timeline.finalizedThrough >= 120 { return .opening }
+        return nil
+    }
+
+    mutating func rename(_ name: String) {
+        title = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(100))
+        titleIsManual = true
+    }
+
+    mutating func applyNotes(title generatedTitle: String?, summary: String, through: Double) {
+        if titleIsManual != true, title == nil, let generatedTitle, !generatedTitle.isEmpty { title = generatedTitle }
+        self.summary = summary
+        summaryThrough = through
+    }
 }
 
 enum SessionStore {
@@ -38,11 +64,21 @@ enum SessionStore {
     }
 
     static func list() throws -> [LectureSession] {
-        try ([root] + [sharedRoot].compactMap { $0 })
+        let exports = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Exports", isDirectory: true)
+        return try ([root] + [sharedRoot].compactMap { $0 })
             .filter { FileManager.default.fileExists(atPath: $0.path) }
             .flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }
             .filter { $0.hasDirectoryPath && FileManager.default.fileExists(atPath: $0.appendingPathComponent("session.json").path) }
-            .map { try JSONDecoder().decode(LectureSession.self, from: Data(contentsOf: $0.appendingPathComponent("session.json"))) }
+            .map { folder in
+                var session = try JSONDecoder().decode(LectureSession.self, from: Data(contentsOf: folder.appendingPathComponent("session.json")))
+                session.clips = session.clips?.map { clip in
+                    var restored = clip
+                    restored.audioURL = exports.appendingPathComponent(clip.audioURL.lastPathComponent)
+                    restored.transcriptURL = exports.appendingPathComponent(clip.transcriptURL.lastPathComponent)
+                    return restored
+                }
+                return session
+            }
             .sorted { $0.createdAt > $1.createdAt }
     }
 
