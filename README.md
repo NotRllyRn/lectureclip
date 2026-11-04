@@ -77,3 +77,21 @@ With Apple Intelligence enabled and its model available, LectureClip automatical
 Open **Notes & titles → Generate / Refresh notes** to generate notes sooner, refresh them, or retry a failure. Without Apple Intelligence, recording, transcription, exports, and manual naming continue to work. Generated titles and summaries should be checked for accuracy.
 
 New exports appear under **Saved clips** for their lecture, including after relaunch. Select a clip, then use **Notes & titles → Regenerate clip title** to generate a name from that clip's transcript and rename its M4A/TXT files. Clips exported before this feature remain available in Files → LectureClip → Exports.
+
+## Summary tab and Shortcuts
+
+Choose **Summary** above the reading area to read notes independently of the live transcript. Word updates only scroll the **Transcript** tab. Returning to Transcript follows the latest text again.
+
+LectureClip registers **Quick Export and Copy** with Apple's App Intents / App Shortcuts framework. After installing the update, open LectureClip once, then find the action under **Shortcuts → Add Action → Apps → LectureClip** (or search its name). It is configured for background execution and does not request that LectureClip open onscreen. It works with the active recording, or the last-selected saved lecture if the app has to launch in the background. It never starts microphone recording or loads Parakeet just to export.
+
+To make a reusable personal shortcut:
+
+1. Create a shortcut containing **LectureClip → Quick Export and Copy**.
+2. Add **Stop and Output** and select the export action's result as its output. Save it as “LectureClip Quick Export.”
+3. Other shortcuts and automations can use **Run Shortcut → LectureClip Quick Export**, then an **If** action on its Boolean result. You can also add the LectureClip action directly to an automation.
+
+`true` means audio export succeeded, the audio/text clipboard write was accepted, and the Quick Export cursor was saved. `false` means the app could not complete the operation—for example, no selected lecture, no newly finalized audio, another export already running, inaccessible protected data, or an export/clipboard error. A failed copy does not advance the cursor. The action uses the same finalized transcript boundary as the app button, so it may return false while transcription catches up.
+
+Use it while the device is unlocked. Background execution is supported by the action, but iOS controls automation permissions, execution time, and whether it launches an app that was force-quit. If iOS cancels or refuses execution before the action completes, Shortcuts may report a system error instead of receiving a Boolean. Very long pending exports and pasting into other apps need physical-device testing; receiving apps still decide which clipboard formats they accept.
+
+Apple references: [App Intent execution modes](https://developer.apple.com/documentation/appintents/appintent/supportedmodes), [creating an App Intent](https://developer.apple.com/documentation/appintents/creating-your-first-app-intent), and [App Shortcuts providers](https://developer.apple.com/documentation/appintents/appshortcutsprovider).
