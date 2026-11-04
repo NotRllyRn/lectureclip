@@ -71,11 +71,13 @@ struct ContentView: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("Audio source", selection: $store.source) {
-                ForEach(RecordingSource.allCases) { source in Text(source.title).tag(source) }
+            if RecordingSource.available.count > 1 {
+                Picker("Audio source", selection: $store.source) {
+                    ForEach(RecordingSource.available) { source in Text(source.title).tag(source) }
+                }
+                .pickerStyle(.segmented)
+                .disabled(store.isRecording || store.broadcastPrepared || store.isBusy || store.exporting || store.summarizing)
             }
-            .pickerStyle(.segmented)
-            .disabled(store.isRecording || store.broadcastPrepared || store.isBusy || store.exporting || store.summarizing)
             HStack {
                 Label(store.isRecording ? "Recording" : "Saved audio", systemImage: store.isRecording ? "record.circle.fill" : "waveform")
                     .foregroundStyle(store.isRecording ? Color.red : Color.primary)

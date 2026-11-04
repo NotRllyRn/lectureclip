@@ -4,7 +4,13 @@ import Foundation
 enum BroadcastStorage {
     static let groupID = "group.com.notrllyrn.LectureClip"
     static let extensionID = "com.notrllyrn.LectureClip.Broadcast"
-    static var container: URL? { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID) }
+    static var container: URL? {
+        #if FREE_SIDELOAD
+        nil
+        #else
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID)
+        #endif
+    }
 
     static func write<T: Encodable>(_ value: T, name: String) throws {
         guard let container else { throw BroadcastError.unavailableGroup }

@@ -51,3 +51,9 @@ Background audio mode supports active microphone recording. It does not guarante
 Audio and transcripts remain local unless shared. First model setup downloads model assets from FluidAudio's model host. Seek permission before recording lectures.
 
 The supplied prototype's original documentation is preserved in [docs/PROTOTYPE.md](docs/PROTOTYPE.md).
+
+## Free-account sideload IPA
+
+On a Mac, run `scripts/package-sideload.sh` to generate `artifacts/LectureClip-Microphone-unsigned.ipa`. This Release build supports both iPhone and iPad on iOS/iPadOS 26+, hides System audio, makes no App Group requests, and omits the broadcast extension. Microphone recording, Parakeet, export and supported on-device summaries remain included. It contains no Apple signing certificate or provisioning profile.
+
+Import the IPA into AltStore or Sideloadly and let that tool sign/install it using your own Apple account. Enter credentials only in your chosen tool. Free-account provisioning normally expires after seven days and must be refreshed; enable Developer Mode/trust the developer profile if iOS requests it. Installation and live capture still need verification on your physical devices. The full Xcode project retains ReplayKit support for a team with App Groups provisioning.

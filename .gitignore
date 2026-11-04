@@ -5,3 +5,5 @@ DerivedData/
 .DS_Store
 DerivedData-device/
 *.xcresult/
+DerivedData-sideload/
+artifacts/
