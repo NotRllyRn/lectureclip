@@ -2,7 +2,8 @@ import SwiftUI
 import UIKit
 
 struct ContentView: View {
-    @StateObject private var store = LectureStore()
+    @ObservedObject var store: LectureStore
+    @State private var showingSummary = false
     @Environment(\.scenePhase) private var scenePhase
     @State private var showingAdvanced = false
     @State private var showingLectures = false
@@ -14,9 +15,20 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 controls.padding()
                 Divider()
-                TranscriptView(words: store.words, finalizedThrough: store.finalizedThrough,
-                               duration: store.snapshot.duration, status: store.transcriptionStatus,
-                               summary: store.session?.summary, summaryThrough: store.session?.summaryThrough)
+                Picker("Lecture view", selection: $showingSummary) {
+                    Text("Transcript").tag(false)
+                    Text("Summary").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal).padding(.vertical, 8)
+                if showingSummary {
+                    SummaryView(summary: store.session?.summary, through: store.session?.summaryThrough,
+                                status: store.notesStatus)
+                        .id(store.session?.id)
+                } else {
+                    TranscriptView(words: store.words, finalizedThrough: store.finalizedThrough,
+                                   duration: store.snapshot.duration, status: store.transcriptionStatus)
+                }
                 Divider()
                 exports.padding()
             }
@@ -54,12 +66,12 @@ struct ContentView: View {
                     .disabled(recordingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Cancel", role: .cancel) { }
             }
-            .task { store.startAutomaticNotes() }
+            .task { await store.activate() }
             .alert("LectureClip", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
                 Button("OK", role: .cancel) { store.errorMessage = nil }
             } message: { Text(store.errorMessage ?? "") }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { store.startRecognition(); store.startAutomaticNotes() }
+                if phase == .active { Task { await store.activate() } }
             }
         }
     }

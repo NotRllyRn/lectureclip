@@ -50,6 +50,7 @@ enum ClipError: LocalizedError {
     case cannotCreateComposition
     case cannotCreateExportSession
     case microphoneDenied
+    case clipboardUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -59,6 +60,7 @@ enum ClipError: LocalizedError {
         case .noAudioTrack: "An audio chunk has no audio track."
         case .cannotCreateComposition: "Could not create the export composition."
         case .cannotCreateExportSession: "Could not create an M4A export session."
+        case .clipboardUnavailable: "Could not copy the clip to the clipboard. The export cursor has not advanced."
         case .microphoneDenied: "Microphone permission was denied."
         }
     }

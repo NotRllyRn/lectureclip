@@ -4,6 +4,7 @@ import UIKit
 
 @MainActor
 final class LectureStore: ObservableObject {
+    static let shared = LectureStore()
     @Published var source: RecordingSource = .microphone
     @Published private(set) var broadcastPrepared = false
     @Published private(set) var session: LectureSession?
@@ -22,6 +23,7 @@ final class LectureStore: ObservableObject {
     @Published private(set) var diagnosticsURL: URL?
     @Published private(set) var preparingDiagnostics = false
     @Published private(set) var notesStatus = "Automatic title and summary after about two minutes of transcription."
+    private let copyClip: @MainActor (ExportedClip) -> Bool
     private let intelligence: any LectureIntelligence
     private var automaticNotesPending = false
     private var earlyNotesAttempted: Set<UUID> = []
@@ -35,7 +37,9 @@ final class LectureStore: ObservableObject {
     var finalizedThrough: Double { session?.timeline.finalizedThrough ?? 0 }
     var canQuickExport: Bool { (try? session?.timeline.quickRange(recordedThrough: snapshot.duration)) != nil }
 
-    init(intelligence: any LectureIntelligence = OnDeviceIntelligence(), restore: Bool = true) {
+    init(intelligence: any LectureIntelligence = OnDeviceIntelligence(), restore: Bool = true,
+         copyClip: @escaping @MainActor (ExportedClip) -> Bool = ClipClipboard.copy) {
+        self.copyClip = copyClip
         self.intelligence = intelligence
         recorder.onInterruption = { [weak self] message in
             Task { @MainActor in
@@ -48,7 +52,8 @@ final class LectureStore: ObservableObject {
         do {
             sessions = try SessionStore.list()
             let broadcast = try? BroadcastStorage.read(BroadcastStatus.self, name: "status.json")
-            let latest = broadcast.flatMap { state in state.isLive ? sessions.first(where: { $0.id == state.sessionID }) : nil } ?? sessions.first
+            let selected = UserDefaults.standard.string(forKey: "selectedSessionID").flatMap(UUID.init(uuidString:))
+            let latest = broadcast.flatMap { state in state.isLive ? sessions.first(where: { $0.id == state.sessionID }) : nil } ?? sessions.first(where: { $0.id == selected }) ?? sessions.first
             if let latest {
                 session = latest
                 resetNotesStatus()
@@ -63,7 +68,14 @@ final class LectureStore: ObservableObject {
                 }
             }
         } catch { errorMessage = error.localizedDescription }
-        if UserDefaults.standard.bool(forKey: "transcriptionEnabled") { Task { await prepareModel() } }
+    }
+
+    // A Shortcuts cold launch should restore disk state without loading a large ASR model.
+    func activate() async {
+        guard UIApplication.shared.applicationState == .active else { return }
+        if !modelReady, UserDefaults.standard.bool(forKey: "transcriptionEnabled") { await prepareModel() }
+        startRecognition()
+        startAutomaticNotes()
     }
 
     func prepareDiagnostics() async {
@@ -103,6 +115,7 @@ final class LectureStore: ObservableObject {
             sessions = try SessionStore.list()
             try await recorder.start(directory: SessionStore.directory(newSession.id))
             session = newSession
+            UserDefaults.standard.set(newSession.id.uuidString, forKey: "selectedSessionID")
             resetNotesStatus()
             snapshot = AudioSnapshot(chunks: [], duration: 0)
             lastClip = nil
@@ -158,6 +171,7 @@ final class LectureStore: ObservableObject {
             guard let fresh = sessions.first(where: { $0.id == saved.id }) else { return }
             snapshot = try SessionStore.snapshot(fresh.id)
             session = fresh
+            UserDefaults.standard.set(fresh.id.uuidString, forKey: "selectedSessionID")
             resetNotesStatus()
             source = fresh.source ?? .microphone
             broadcastPrepared = false
@@ -177,6 +191,7 @@ final class LectureStore: ObservableObject {
             let newSession = try SessionStore.create(source: .systemAudio)
             try BroadcastStorage.write(BroadcastRequest(sessionID: newSession.id), name: "request.json")
             session = newSession
+            UserDefaults.standard.set(newSession.id.uuidString, forKey: "selectedSessionID")
             resetNotesStatus()
             snapshot = AudioSnapshot(chunks: [], duration: 0)
             sessions = try SessionStore.list()
@@ -267,15 +282,16 @@ final class LectureStore: ObservableObject {
         }
     }
 
-    func export(start: Double? = nil, end: Double? = nil) async {
-        guard !exporting, !isBusy, let id = session?.id else { return }
+    @discardableResult
+    func export(start: Double? = nil, end: Double? = nil, reportErrors: Bool = true) async -> Bool {
+        guard !Task.isCancelled, !exporting, !isBusy, let id = session?.id else { return false }
         exporting = true
         defer { exporting = false }
         do {
             if isRecording {
                 snapshot = session?.source == .systemAudio ? try SessionStore.snapshot(id) : try await recorder.snapshotForExport()
             }
-            guard let current = session else { return }
+            guard let current = session else { return false }
             let quick = start == nil
             let range = try quick ? current.timeline.quickRange(recordedThrough: snapshot.duration)
                 : (start! ..< min(end ?? snapshot.duration, snapshot.duration))
@@ -283,15 +299,32 @@ final class LectureStore: ObservableObject {
                                                       words: words, chunks: snapshot.chunks,
                                                       title: "\(current.displayTitle) \(clockString(range.lowerBound))–\(clockString(range.upperBound))")
             // Merge into fresh metadata; recognition/automatic notes may have advanced.
-            guard var updated = session, updated.id == id else { ClipExporter.removeFiles(clip); return }
+            guard var updated = session, updated.id == id else { ClipExporter.removeFiles(clip); return false }
             if quick { updated.timeline.quickExportCursor = range.upperBound }
             updated.clips = (updated.clips ?? []) + [clip]
-            do { try persist(updated) }
-            catch { ClipExporter.removeFiles(clip); throw error }
-            ClipClipboard.copy(clip)
+            do {
+                try Task.checkCancellation()
+                guard copyClip(clip) else { throw ClipError.clipboardUnavailable }
+            } catch {
+                ClipExporter.removeFiles(clip)
+                throw error
+            }
+            // If saving the cursor fails, keep the files already backing the clipboard.
+            // Retrying may copy the same interval, but must never skip it.
+            try persist(updated)
             lastClip = clip
             status = "Copied \(clockString(range.lowerBound))–\(clockString(range.upperBound)). Files saved in Exports."
-        } catch { errorMessage = error.localizedDescription }
+            return true
+        } catch {
+            if reportErrors { errorMessage = error.localizedDescription }
+            Diagnostics.record("Export failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    func quickExportFromShortcut() async -> Bool {
+        guard UIApplication.shared.isProtectedDataAvailable else { return false }
+        return await export(reportErrors: false)
     }
 
     private func resetNotesStatus() {
