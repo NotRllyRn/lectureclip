@@ -104,7 +104,7 @@ struct ContentView: View {
                 }
             }
             HStack {
-                Label(store.isRecording ? "Recording" : "Saved audio", systemImage: store.isRecording ? "record.circle.fill" : "waveform")
+                Label(store.isRecording ? "Recording" : (store.isRecordingPaused ? "Paused" : "Saved audio"), systemImage: store.isRecording ? "record.circle.fill" : "waveform")
                     .foregroundStyle(store.isRecording ? Color.red : Color.primary)
                 Spacer()
                 Text(clockString(store.snapshot.duration)).font(.title2.monospacedDigit())
@@ -119,18 +119,19 @@ struct ContentView: View {
                     Button("Cancel broadcast setup") { store.cancelBroadcastSetup() }.font(.caption)
                 }
             } else {
-            Button {
-                Task {
-                    if store.isRecording { await store.stopRecording() }
-                    else { await store.startRecording() }
+                if store.canResume && store.source == .microphone {
+                    HStack {
+                        Button { Task { await store.resumeRecording() } } label: {
+                            Label("Continue recording", systemImage: "play.fill").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(store.isBusy || store.exporting)
+                        .accessibilityIdentifier("resumeButton")
+                        recordingButton
+                    }
+                } else {
+                    recordingButton
                 }
-            } label: {
-                Label(store.isRecording ? "Stop recording" : (store.source == .systemAudio ? "Prepare system recording" : "New recording"), systemImage: store.isRecording ? "stop.fill" : "mic.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(store.isBusy || store.exporting || (store.summarizing && !store.isRecording))
-            .accessibilityIdentifier("recordButton")
             }
             Text(store.transcriptionStatus).font(.caption).foregroundStyle(.secondary)
             if !store.modelReady {
@@ -141,6 +142,22 @@ struct ContentView: View {
                 Button("Retry transcription") { store.startRecognition() }.font(.caption)
             }
         }
+    }
+
+    private var recordingButton: some View {
+        Button {
+            Task {
+                if store.isRecording { await store.stopRecording() }
+                else { await store.startRecording() }
+            }
+        } label: {
+            Label(store.isRecording ? "Stop recording" : (store.source == .systemAudio ? "Prepare system recording" : "New recording"),
+                  systemImage: store.isRecording ? "stop.fill" : "mic.fill")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(store.isBusy || (store.exporting && !store.isRecording))
+        .accessibilityIdentifier("recordButton")
     }
 
     private var exports: some View {

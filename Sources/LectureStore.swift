@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import UIKit
+import AVFAudio
 
 @MainActor
 final class LectureStore: ObservableObject {
@@ -28,7 +29,7 @@ final class LectureStore: ObservableObject {
     private var automaticNotesPending = false
     private var earlyNotesAttempted: Set<UUID> = []
     private var finalNotesAttempted: Set<UUID> = []
-    private let recorder = SegmentedAudioRecorder()
+    private let recorder: any LectureRecording
     private let transcriber = ParakeetTranscriber()
     private var monitor: Task<Void, Never>?
     private var recognition: Task<Void, Never>?
@@ -37,8 +38,23 @@ final class LectureStore: ObservableObject {
     var finalizedThrough: Double { session?.timeline.finalizedThrough ?? 0 }
     var canQuickExport: Bool { (try? session?.timeline.quickRange(recordedThrough: snapshot.duration)) != nil }
 
+    private var liveBroadcast: BroadcastStatus? {
+        guard let state = try? BroadcastStorage.read(BroadcastStatus.self, name: "status.json"), state.isLive else { return nil }
+        return state
+    }
+
+    var isRecordingActive: Bool { recorder.isRecording || liveBroadcast?.phase == .recording }
+    var isRecordingPaused: Bool {
+        guard !isRecordingActive, !isBusy else { return false }
+        if let broadcast = liveBroadcast { return broadcast.phase == .paused }
+        return session?.source != .systemAudio && session?.recordingState == .paused
+    }
+    var canResume: Bool { isRecordingPaused && !broadcastPrepared && session?.source != .systemAudio }
+
     init(intelligence: any LectureIntelligence = OnDeviceIntelligence(), restore: Bool = true,
-         copyClip: @escaping @MainActor (ExportedClip) -> Bool = ClipClipboard.copy) {
+         copyClip: @escaping @MainActor (ExportedClip) -> Bool = ClipClipboard.copy,
+         recorder: any LectureRecording = SegmentedAudioRecorder()) {
+        self.recorder = recorder
         self.copyClip = copyClip
         self.intelligence = intelligence
         recorder.onInterruption = { [weak self] message in
@@ -61,6 +77,7 @@ final class LectureStore: ObservableObject {
                 snapshot = try SessionStore.snapshot(latest.id)
                 source = latest.source ?? .microphone
                 status = "Recovered saved audio. Recording is stopped."
+                try markSelectedPaused()
                 if source == .systemAudio, let broadcast, broadcast.sessionID == latest.id, broadcast.isLive {
                     isRecording = true
                     broadcastPrepared = true
@@ -103,62 +120,145 @@ final class LectureStore: ObservableObject {
         } catch { transcriptionStatus = "Model unavailable: \(error.localizedDescription). Tap Download / Retry." }
     }
 
-    func startRecording() async {
-        guard !isBusy, !exporting, !summarizing, !isRecording else { return }
-        if source == .systemAudio { await prepareBroadcast(); return }
+    @discardableResult
+    func startRecording(reportErrors: Bool = true) async -> Bool {
+        guard !Task.isCancelled, !isBusy, !exporting, !isRecordingActive, !broadcastPrepared else { return false }
+        if source == .systemAudio { await prepareBroadcast(); return false }
+        isBusy = true
+        defer { isBusy = false; startAutomaticNotes() }
+        await cancelRecognition()
+        monitor?.cancel()
+        var created: LectureSession?
+        do {
+            let newSession = try SessionStore.create()
+            created = newSession
+            try await beginMicrophone(newSession, existing: AudioSnapshot(chunks: [], duration: 0))
+            return true
+        } catch {
+            if let created, (try? SessionStore.snapshot(created.id).duration) == 0 {
+                try? FileManager.default.removeItem(at: SessionStore.directory(created.id))
+            }
+            sessions = (try? SessionStore.list()) ?? sessions
+            reportRecordingError(error, showAlert: reportErrors)
+            startRecognition()
+            return false
+        }
+    }
+
+    @discardableResult
+    func resumeRecording(reportErrors: Bool = true) async -> Bool {
+        guard !Task.isCancelled, !isBusy, !exporting, !isRecordingActive, !broadcastPrepared,
+              let current = session, current.source != .systemAudio else { return false }
         isBusy = true
         defer { isBusy = false; startAutomaticNotes() }
         await cancelRecognition()
         monitor?.cancel()
         do {
-            let newSession = try SessionStore.create()
-            sessions = try SessionStore.list()
-            try await recorder.start(directory: SessionStore.directory(newSession.id))
-            session = newSession
-            UserDefaults.standard.set(newSession.id.uuidString, forKey: "selectedSessionID")
-            resetNotesStatus()
-            snapshot = AudioSnapshot(chunks: [], duration: 0)
-            lastClip = nil
-            broadcastPrepared = false
-            isRecording = true
-            status = "Recording. Audio is saved independently of transcription."
-            monitor = Task { [weak self] in
-                while !Task.isCancelled {
-                    do { try await Task.sleep(for: .seconds(2)) } catch { return }
-                    guard let self, self.isRecording else { return }
-                    do { self.snapshot = try await self.recorder.snapshotForExport() }
-                    catch {
-                        await self.stopRecording()
-                        self.errorMessage = error.localizedDescription
-                        return
-                    }
-                }
-            }
-            startRecognition()
+            let existing = try SessionStore.snapshot(current.id)
+            try await beginMicrophone(current, existing: existing)
+            finalNotesAttempted.remove(current.id)
+            if session?.summaryThrough == nil { earlyNotesAttempted.remove(current.id) }
+            return true
         } catch {
-            errorMessage = error.localizedDescription
+            snapshot = (try? SessionStore.snapshot(current.id)) ?? snapshot
+            reportRecordingError(error, showAlert: reportErrors)
             startRecognition()
+            return false
         }
     }
 
-    func stopRecording() async {
-        guard isRecording else { return }
+    private func beginMicrophone(_ saved: LectureSession, existing: AudioSnapshot) async throws {
+        try await recorder.start(directory: SessionStore.directory(saved.id), existing: existing)
+        do {
+            try Task.checkCancellation()
+            // Preserve notes or a manual rename completed while capture was starting.
+            var updated = session?.id == saved.id ? session! : saved
+            updated.recordingState = .recording
+            let newLecture = session?.id != saved.id
+            try persist(updated)
+            UserDefaults.standard.set(updated.id.uuidString, forKey: "selectedSessionID")
+            if newLecture { lastClip = nil }
+            source = .microphone
+            resetNotesStatus()
+            snapshot = existing
+            broadcastPrepared = false
+            isRecording = true
+            status = existing.duration > 0 ? "Recording continued. Paused time is excluded from the audio timeline." : "Recording. Audio is saved independently of transcription."
+            watchMicrophone()
+            startRecognition()
+            if !modelReady, UserDefaults.standard.bool(forKey: "transcriptionEnabled") {
+                Task { await prepareModel() }
+            }
+        } catch {
+            _ = try? await recorder.stop()
+            throw error
+        }
+    }
+
+    private func watchMicrophone() {
+        monitor = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                guard let self, self.isRecording else { return }
+                do { self.snapshot = try await self.recorder.snapshotForExport() }
+                catch {
+                    await self.stopRecording()
+                    self.errorMessage = error.localizedDescription
+                    return
+                }
+            }
+        }
+    }
+
+    @discardableResult
+    func stopRecording(reportErrors: Bool = true) async -> Bool {
+        guard !isBusy, isRecording else { return false }
         if session?.source == .systemAudio {
             status = "Stop using the screen-broadcast button or the system recording indicator."
-            return
+            return false
         }
         isBusy = true
         defer { isBusy = false; startAutomaticNotes() }
         isRecording = false
         monitor?.cancel()
         monitor = nil
-        do { snapshot = try await recorder.stop() }
-        catch {
-            errorMessage = error.localizedDescription
+        do {
+            snapshot = try await recorder.stop()
+            try markSelectedPaused()
+            status = "Recording paused. Continue this lecture or start a new recording."
+            startRecognition()
+            return true
+        } catch {
+            session?.recordingState = .paused
             if let session { snapshot = (try? SessionStore.snapshot(session.id)) ?? snapshot }
+            reportRecordingError(error, showAlert: reportErrors)
+            startRecognition()
+            return false
         }
-        status = "Recording stopped. Saved audio remains available."
-        startRecognition()
+    }
+
+    private func markSelectedPaused() throws {
+        guard var updated = session, updated.source != .systemAudio,
+              updated.recordingState != nil || snapshot.duration > 0 else { return }
+        updated.recordingState = .paused
+        try persist(updated)
+    }
+
+    private func reportRecordingError(_ error: Error, showAlert: Bool) {
+        if showAlert { errorMessage = error.localizedDescription }
+        Diagnostics.record("Recording action failed: \(error.localizedDescription)")
+    }
+
+    func startRecordingFromShortcut() async -> Bool {
+        guard UIApplication.shared.isProtectedDataAvailable, AVAudioApplication.shared.recordPermission == .granted,
+              !isBusy, !exporting, !isRecordingActive, !broadcastPrepared else { return false }
+        source = .microphone
+        return await startRecording(reportErrors: false)
+    }
+
+    func resumeRecordingFromShortcut() async -> Bool {
+        guard UIApplication.shared.isProtectedDataAvailable, AVAudioApplication.shared.recordPermission == .granted else { return false }
+        return await resumeRecording(reportErrors: false)
     }
 
     func open(_ saved: LectureSession) async {
@@ -171,6 +271,7 @@ final class LectureStore: ObservableObject {
             guard let fresh = sessions.first(where: { $0.id == saved.id }) else { return }
             snapshot = try SessionStore.snapshot(fresh.id)
             session = fresh
+            try markSelectedPaused()
             UserDefaults.standard.set(fresh.id.uuidString, forKey: "selectedSessionID")
             resetNotesStatus()
             source = fresh.source ?? .microphone

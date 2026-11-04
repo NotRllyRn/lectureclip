@@ -7,7 +7,7 @@ private struct CaptureFailure: LocalizedError {
 }
 
 @MainActor
-final class SegmentedAudioRecorder: ObservableObject {
+final class SegmentedAudioRecorder: ObservableObject, LectureRecording {
     @Published private(set) var isRecording = false
     var onInterruption: ((String) -> Void)?
     private var engine: AVAudioEngine?
@@ -22,16 +22,18 @@ final class SegmentedAudioRecorder: ObservableObject {
                    (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) != AVAudioSession.InterruptionType.began.rawValue { return }
                 Task { @MainActor [weak self] in
                     guard let self, self.isRecording else { return }
-                    self.onInterruption?("Recording interrupted by an audio session or input change. Start a new recording to continue.")
+                    self.onInterruption?("Recording interrupted by an audio session or input change. Use Continue recording when the microphone is available.")
                 }
             })
         }
     }
 
-    func start(directory: URL) async throws {
+    func start(directory: URL, existing: AudioSnapshot = AudioSnapshot(chunks: [], duration: 0)) async throws {
         guard !isRecording else { return }
+        try await Task.detached { try Self.validate(existing) }.value
         let granted = await AVAudioApplication.requestRecordPermission()
         guard granted else { throw ClipError.microphoneDenied }
+        try Task.checkCancellation()
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
         try session.setActive(true)
@@ -42,7 +44,7 @@ final class SegmentedAudioRecorder: ObservableObject {
             guard format.sampleRate > 0, format.channelCount > 0 else {
                 throw CaptureFailure(errorDescription: "No microphone input is available.")
             }
-            let newWriter = ChunkWriter(format: format, directory: directory) { [weak self] message in
+            let newWriter = ChunkWriter(format: format, directory: directory, existing: existing) { [weak self] message in
                 Task { @MainActor [weak self] in
                     guard let self, self.isRecording else { return }
                     self.onInterruption?(message)
@@ -61,13 +63,28 @@ final class SegmentedAudioRecorder: ObservableObject {
             ) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self, self.isRecording else { return }
-                    self.onInterruption?("Audio input changed. Saved audio is preserved; start a new recording to continue.")
+                    self.onInterruption?("Audio input changed. Saved audio is preserved; use Continue recording when the microphone is available.")
                 }
             }
         } catch {
             try? session.setActive(false, options: .notifyOthersOnDeactivation)
             throw error
         }
+    }
+
+    nonisolated static func validate(_ snapshot: AudioSnapshot) throws {
+        guard snapshot.duration.isFinite, snapshot.duration >= 0 else { throw ClipError.invalidRange }
+        var cursor = 0.0
+        for chunk in snapshot.chunks {
+            guard chunk.sampleRate.isFinite, chunk.sampleRate > 0, chunk.frameCount > 0,
+                  abs(chunk.start - cursor) < 0.001 else { throw ClipError.missingAudio(at: cursor) }
+            let file = try AVAudioFile(forReading: chunk.url)
+            guard file.length >= chunk.frameCount, abs(file.processingFormat.sampleRate - chunk.sampleRate) < 0.01 else {
+                throw ClipError.missingAudio(at: chunk.start)
+            }
+            cursor = chunk.end
+        }
+        guard abs(cursor - snapshot.duration) < 0.001 else { throw ClipError.missingAudio(at: cursor) }
     }
 
     func snapshotForExport() async throws -> AudioSnapshot {

@@ -18,5 +18,15 @@ struct LectureClipShortcuts: AppShortcutsProvider {
         AppShortcut(intent: QuickExportIntent(),
                     phrases: ["Quick export with \(.applicationName)"],
                     shortTitle: "Quick Export and Copy", systemImageName: "doc.on.clipboard")
+        AppShortcut(intent: StartRecordingIntent(), phrases: ["Start recording with \(.applicationName)"],
+                    shortTitle: "Start New Recording", systemImageName: "record.circle")
+        AppShortcut(intent: StopRecordingIntent(), phrases: ["Stop recording with \(.applicationName)"],
+                    shortTitle: "Stop Recording", systemImageName: "stop.circle")
+        AppShortcut(intent: ResumeRecordingIntent(), phrases: ["Resume recording with \(.applicationName)"],
+                    shortTitle: "Resume Recording", systemImageName: "play.circle")
+        AppShortcut(intent: IsRecordingActiveIntent(), phrases: ["Is \(.applicationName) recording"],
+                    shortTitle: "Is Recording Active", systemImageName: "waveform")
+        AppShortcut(intent: IsRecordingPausedIntent(), phrases: ["Is \(.applicationName) paused"],
+                    shortTitle: "Is Recording Paused", systemImageName: "pause.circle")
     }
 }

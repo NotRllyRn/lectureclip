@@ -15,9 +15,11 @@ final class ChunkWriter: @unchecked Sendable {
     private var failure: Error?
     private let onFailure: @Sendable (String) -> Void
 
-    init(format: AVAudioFormat, directory: URL, onFailure: @escaping @Sendable (String) -> Void) {
+    init(format: AVAudioFormat, directory: URL, existing: AudioSnapshot = AudioSnapshot(chunks: [], duration: 0), onFailure: @escaping @Sendable (String) -> Void) {
         self.format = format
         self.directory = directory
+        finished = existing.chunks
+        totalFrames = Int64((existing.duration * format.sampleRate).rounded())
         self.onFailure = onFailure
     }
 
@@ -58,7 +60,7 @@ final class ChunkWriter: @unchecked Sendable {
             guard failure == nil else { return }
             do {
                 if file == nil {
-                    let next = directory.appendingPathComponent(String(format: "chunk_%06d.caf", finished.count))
+                    let next = directory.appendingPathComponent("chunk_\(UUID().uuidString).caf")
                     url = next
                     file = try AVAudioFile(forWriting: next, settings: format.settings,
                                            commonFormat: format.commonFormat, interleaved: format.isInterleaved)
@@ -92,7 +94,7 @@ final class ChunkWriter: @unchecked Sendable {
     private func snapshotOnQueue() throws -> AudioSnapshot {
         try seal()
         if let failure { throw failure }
-        return AudioSnapshot(chunks: finished, duration: Double(totalFrames) / format.sampleRate)
+        return AudioSnapshot(chunks: finished, duration: finished.last?.end ?? 0)
     }
 
     func finishSynchronously() throws -> AudioSnapshot { try queue.sync { try snapshotOnQueue() } }

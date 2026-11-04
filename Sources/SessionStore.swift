@@ -10,6 +10,8 @@ struct LectureSession: Codable, Identifiable, Sendable {
     var titleIsManual: Bool?
     var summaryThrough: Double?
     var clips: [ExportedClip]?
+    enum RecordingState: String, Codable, Sendable { case recording, paused }
+    var recordingState: RecordingState?
 
     var displayTitle: String { title?.isEmpty == false ? title! : "Untitled lecture" }
 
