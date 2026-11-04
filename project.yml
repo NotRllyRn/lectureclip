@@ -26,6 +26,8 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: LectureClip
+        NSMicrophoneUsageDescription: Record lectures for private study and audio-clip export.
+        UIBackgroundModes: [audio]
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
@@ -49,6 +51,12 @@ targets:
       - path: Sources/BroadcastState.swift
     info:
       path: BroadcastExtension/Info.plist
+      properties:
+        CFBundleDisplayName: LectureClip Audio
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.broadcast-services-upload
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SampleHandler
+          RPBroadcastProcessMode: RPBroadcastProcessModeSampleBuffer
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.notrllyrn.LectureClip.Broadcast
