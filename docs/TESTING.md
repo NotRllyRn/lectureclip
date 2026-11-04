@@ -57,3 +57,9 @@ AudioWindowReader now accumulates short reads before resampling, computes frame 
 A handled transcription error does not normally create an Apple crash report. In LectureClip 1.0.2 or later, open the stethoscope (Diagnostics) menu, choose **Prepare diagnostics**, then reopen that menu and choose **Share diagnostics**. Save/share `LectureClip-diagnostics.txt`. A copy is also available in Files → On My iPhone/iPad → LectureClip → Diagnostics. Regenerate after reproducing an issue to capture the current session.
 
 The report contains the app/OS version, pipeline state, the last 80 status/error events (retained across launches), and saved chunk metadata compared with actual file lengths/formats. It does not attach audio or transcript content. Quick Export still waits for the finalized transcript boundary; Advanced Export can export saved audio while recognition is paused. Install the update over the existing app using the same SideStore account to preserve downloaded models and saved lectures.
+
+## 1.0.3 live sentence layout
+
+TranscriptView groups recognized words using Apple's sentence tokenizer, renders each sentence as a wrapping paragraph with one timestamp, and keeps provisional words lighter. The unfinished sentence grows as ASR updates arrive; punctuation/revisions determine sentence boundaries. ScrollViewReader follows the transcript end on word updates, including revisions with unchanged word counts, and respects Reduce Motion. Recognition still delivers batches; the UI does not add a typing delay.
+
+The iPhone simulator launch check passed. A populated simulator session was visually inspected for sentence wrapping, abbreviation handling (Dr. Rivera), provisional styling, and initial scrolling to the latest sentence. Live physical-device updates remain a user acceptance check. The unsigned device build supports both iPhone and iPad.

@@ -11,31 +11,9 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 controls.padding()
                 Divider()
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Label("Transcript", systemImage: "text.bubble").font(.headline)
-                            Spacer()
-                            Text("Final through \(clockString(store.finalizedThrough))").font(.caption)
-                        }
-                        if store.words.isEmpty {
-                            ContentUnavailableView(store.snapshot.duration > 0 ? "Waiting for transcription" : "Ready to listen", systemImage: "waveform",
-                                description: Text(store.snapshot.duration > 0 ? store.transcriptionStatus : "Record now. Download Parakeet V3 to transcribe locally, or catch up from saved audio later."))
-                        }
-                        ForEach(store.words) { word in
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(clockString(word.start)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                                Text(word.text).foregroundStyle(word.isFinal ? Color.primary : Color.secondary)
-                            }
-                        }
-                        if let summary = store.session?.summary {
-                            Divider()
-                            Text("Study summary").font(.headline)
-                            Text(summary).textSelection(.enabled)
-                            Text("Generated on device. Check against your transcript.").font(.caption).foregroundStyle(.secondary)
-                        }
-                    }.padding()
-                }
+                TranscriptView(words: store.words, finalizedThrough: store.finalizedThrough,
+                               duration: store.snapshot.duration, status: store.transcriptionStatus,
+                               summary: store.session?.summary)
                 Divider()
                 exports.padding()
             }
