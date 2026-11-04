@@ -109,3 +109,10 @@ Validation: the initial complete native iPhone suite passed all 12 tests. After 
 The v1.0.7 GitHub run failed on iOS 26.4 when a 100 ms export across a 44.1 kHz → 48 kHz resume boundary produced a 150 ms M4A. Packaging and release publication were correctly blocked; the iPad tests did not run in that failed job.
 
 ClipExporter now sets AVAssetExportSession.timeRange explicitly to the assembled selection. The original regression and its 20 ms tolerance are unchanged. All 13 native tests passed on the connected iPhone simulator with iOS 27.2, and GitHub run 41931326716 passed core tests, both SDK builds, and the iPhone/iPad simulator checks with this fix. Physical-device microphone capture and OS-routed background shortcuts still require testing through SideStore.
+
+
+## 1.0.9 continuous PCM export
+
+The initial explicit-timeRange fix passed one CI run but failed again in the v1.0.8 release run (41933417778), with the same 150 ms result. That version was not published. The exporter now prepares a single mono PCM CAF at the lowest selected native sample rate before M4A encoding, instead of composing edits from different input formats. Preparation runs off the main actor in windows of at most five seconds; the temporary CAF is removed afterward. Original recordings remain unchanged. AudioWindowReader retains its default 16 kHz transcription behavior and accepts an explicit target rate for export.
+
+The regression now repeats the 100 ms boundary export five times, retains the original duration tolerance, and decodes positive/negative sample markers to verify audio on both sides of the resume boundary. All 13 native tests passed locally on iOS 27.2 after this change, including the existing durable export and clipboard shortcut tests. Upsampling is avoided: the converter returned fewer frames than expected when converting the 16 kHz test fixtures to 48 kHz. Export preparation checks frame counts and only reconciles rounding differences of at most four frames per window.
