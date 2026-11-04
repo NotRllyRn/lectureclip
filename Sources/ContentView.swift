@@ -19,8 +19,8 @@ struct ContentView: View {
                             Text("Final through \(clockString(store.finalizedThrough))").font(.caption)
                         }
                         if store.words.isEmpty {
-                            ContentUnavailableView("Ready to listen", systemImage: "waveform",
-                                description: Text("Record now. Download Parakeet V3 to transcribe locally, or catch up from saved audio later."))
+                            ContentUnavailableView(store.snapshot.duration > 0 ? "Waiting for transcription" : "Ready to listen", systemImage: "waveform",
+                                description: Text(store.snapshot.duration > 0 ? store.transcriptionStatus : "Record now. Download Parakeet V3 to transcribe locally, or catch up from saved audio later."))
                         }
                         ForEach(store.words) { word in
                             HStack(alignment: .firstTextBaseline) {
@@ -43,6 +43,16 @@ struct ContentView: View {
             .frame(maxWidth: .infinity)
             .navigationTitle("LectureClip")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Button(store.preparingDiagnostics ? "Preparing…" : "Prepare diagnostics") {
+                            Task { await store.prepareDiagnostics() }
+                        }.disabled(store.preparingDiagnostics)
+                        if let url = store.diagnosticsURL {
+                            ShareLink(item: url) { Label("Share diagnostics", systemImage: "square.and.arrow.up") }
+                        }
+                    } label: { Label("Diagnostics", systemImage: "stethoscope") }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         ForEach(store.sessions) { session in
@@ -123,6 +133,10 @@ struct ContentView: View {
             ViewThatFits(in: .horizontal) {
                 HStack { quickButton; advancedButton }
                 VStack { quickButton; advancedButton }
+            }
+            if !store.canQuickExport && store.snapshot.duration >= 0.1 {
+                Text("Quick Export waits for finalized transcription. Advanced Export can export saved audio now.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Text(store.status).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("exportStatus")
             if let clip = store.lastClip {

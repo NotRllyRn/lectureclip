@@ -16,9 +16,11 @@ final class LectureStore: ObservableObject {
     @Published private(set) var preparingModel = false
     @Published private(set) var summarizing = false
     @Published private(set) var lastClip: ExportedClip?
-    @Published var errorMessage: String?
-    @Published var status = "Record a lecture or open a saved session."
-    @Published var transcriptionStatus = "Download the speech model to enable local transcription."
+    @Published var errorMessage: String? { didSet { if let errorMessage { Diagnostics.record(errorMessage) } } }
+    @Published var status = "Record a lecture or open a saved session." { didSet { Diagnostics.record(status) } }
+    @Published var transcriptionStatus = "Download the speech model to enable local transcription." { didSet { Diagnostics.record(transcriptionStatus) } }
+    @Published private(set) var diagnosticsURL: URL?
+    @Published private(set) var preparingDiagnostics = false
     private let recorder = SegmentedAudioRecorder()
     private let transcriber = ParakeetTranscriber()
     private var monitor: Task<Void, Never>?
@@ -53,6 +55,17 @@ final class LectureStore: ObservableObject {
             }
         } catch { errorMessage = error.localizedDescription }
         if UserDefaults.standard.bool(forKey: "transcriptionEnabled") { Task { await prepareModel() } }
+    }
+
+    func prepareDiagnostics() async {
+        guard !preparingDiagnostics else { return }
+        preparingDiagnostics = true
+        diagnosticsURL = nil
+        defer { preparingDiagnostics = false }
+        do {
+            diagnosticsURL = try await Diagnostics.report(snapshot: snapshot, finalizedThrough: finalizedThrough,
+                                                          recording: isRecording, modelReady: modelReady)
+        } catch { errorMessage = error.localizedDescription }
     }
 
     func prepareModel() async {
@@ -234,7 +247,7 @@ final class LectureStore: ObservableObject {
                     if self.isRecording { try await Task.sleep(for: .seconds(2)) }
                 } catch is CancellationError { return }
                 catch {
-                    self.transcriptionStatus = "Transcription paused: \(error.localizedDescription). Saved audio is safe; tap Retry transcription."
+                    self.transcriptionStatus = "Transcription paused: \(error.localizedDescription). Tap Retry transcription or share diagnostics."
                     return
                 }
             }
