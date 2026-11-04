@@ -3,9 +3,9 @@ import FluidAudio
 
 /// Reads sealed chunks only; short AVAudioFile reads do not imply missing audio.
 enum AudioWindowReader {
-    static func samples(snapshot: AudioSnapshot, start: Double, end: Double) throws -> [Float] {
+    static func samples(snapshot: AudioSnapshot, start: Double, end: Double, sampleRate: Double = 16_000) throws -> [Float] {
         guard start >= 0, end > start else { throw ClipError.invalidRange }
-        let converter = AudioConverter(sampleRate: 16_000)
+        let converter = AudioConverter(sampleRate: sampleRate)
         var samples: [Float] = []
         var cursor = start
         for chunk in snapshot.chunks where chunk.end > start && chunk.start < end {

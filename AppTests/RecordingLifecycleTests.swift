@@ -155,12 +155,22 @@ final class RecordingLifecycleTests: XCTestCase {
         try SegmentedAudioRecorder.validate(resumed)
         let samples = try AudioWindowReader.samples(snapshot: resumed, start: 0, end: resumed.duration)
         XCTAssertEqual(Double(samples.count), resumed.duration * 16_000, accuracy: 4)
-        let clip = try await ClipExporter.export(start: initial.duration - 0.05, end: initial.duration + 0.05,
-                                                words: [], chunks: resumed.chunks)
-        defer { ClipExporter.removeFiles(clip) }
-        XCTAssertGreaterThan(try AVAudioFile(forReading: clip.audioURL).length, 0)
-        let duration = try await AVURLAsset(url: clip.audioURL).load(.duration)
-        XCTAssertEqual(duration.seconds, 0.1, accuracy: 0.02)
+        // Repeat to catch the intermittent mixed-format export regression.
+        for _ in 0..<5 {
+            let clip = try await ClipExporter.export(start: initial.duration - 0.05, end: initial.duration + 0.05,
+                                                    words: [], chunks: resumed.chunks)
+            defer { ClipExporter.removeFiles(clip) }
+            let duration = try await AVURLAsset(url: clip.audioURL).load(.duration)
+            XCTAssertEqual(duration.seconds, 0.1, accuracy: 0.02)
+            let file = try AVAudioFile(forReading: clip.audioURL)
+            let decoded = try AudioWindowReader.read(file, first: 0, count: AVAudioFrameCount(0.09 * file.processingFormat.sampleRate))
+            let channel = try XCTUnwrap(decoded.floatChannelData?[0])
+            // Both sides of the resume boundary must survive, not merely the container duration.
+            let early = Int(0.025 * file.processingFormat.sampleRate)
+            let late = Int(0.075 * file.processingFormat.sampleRate)
+            XCTAssertGreaterThan(channel[early], 0.1)
+            XCTAssertLessThan(channel[late], -0.1)
+        }
         try FileManager.default.removeItem(at: oldURL)
         XCTAssertThrowsError(try SegmentedAudioRecorder.validate(resumed))
     }

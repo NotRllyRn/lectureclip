@@ -8,37 +8,11 @@ struct ClipExporter {
     static func export(start: TimeInterval, end: TimeInterval,
                        words: [TranscriptWord], chunks: [AudioChunk], title: String? = nil) async throws -> ExportedClip {
         guard start >= 0, end - start >= 0.025 else { throw ClipError.invalidRange }
-        let sorted = chunks.sorted { $0.start < $1.start }
-        guard !sorted.isEmpty else { throw ClipError.missingAudio(at: start) }
-
-        let composition = AVMutableComposition()
-        guard let outputTrack = composition.addMutableTrack(
-            withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid
-        ) else { throw ClipError.cannotCreateComposition }
-
-        var cursor = start
-        var insertionTime = CMTime.zero
-        let tolerance = 0.0001
-        for chunk in sorted {
-            if cursor >= end - tolerance { break }
-            let overlapStart = max(cursor, chunk.start)
-            let overlapEnd = min(end, chunk.end)
-            guard overlapEnd > overlapStart else { continue }
-            if overlapStart > cursor + tolerance { throw ClipError.missingAudio(at: cursor) }
-
-            let asset = AVURLAsset(url: chunk.url)
-            guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
-                throw ClipError.noAudioTrack
-            }
-            let range = CMTimeRange(
-                start: CMTime(seconds: overlapStart - chunk.start, preferredTimescale: 60_000),
-                duration: CMTime(seconds: overlapEnd - overlapStart, preferredTimescale: 60_000)
-            )
-            try outputTrack.insertTimeRange(range, of: track, at: insertionTime)
-            insertionTime = CMTimeAdd(insertionTime, range.duration)
-            cursor = overlapEnd
-        }
-        if cursor < end - tolerance { throw ClipError.missingAudio(at: cursor) }
+        let preparedURL = FileManager.default.temporaryDirectory.appendingPathComponent("export-\(UUID()).caf")
+        defer { try? FileManager.default.removeItem(at: preparedURL) }
+        try await Task.detached(priority: .userInitiated) {
+            try prepareAudio(start: start, end: end, chunks: chunks, to: preparedURL)
+        }.value
 
         let outputDirectory = FileManager.default.urls(
             for: .documentDirectory, in: .userDomainMask
@@ -49,10 +23,10 @@ struct ClipExporter {
         let audioURL = outputDirectory.appendingPathComponent(name + ".m4a")
         let transcriptURL = outputDirectory.appendingPathComponent(name + ".txt")
         guard let session = AVAssetExportSession(
-            asset: composition, presetName: AVAssetExportPresetAppleM4A
+            asset: AVURLAsset(url: preparedURL), presetName: AVAssetExportPresetAppleM4A
         ) else { throw ClipError.cannotCreateExportSession }
-        // Bound encoding explicitly: mixed sample-rate edits can extend the inferred end.
-        session.timeRange = CMTimeRange(start: .zero, duration: insertionTime)
+        // Encode one continuous PCM stream, bounded to the requested interval.
+        session.timeRange = CMTimeRange(start: .zero, duration: CMTime(seconds: end - start, preferredTimescale: 48_000))
         try await session.export(to: audioURL, as: .m4a)
 
         let excerpt = selectedWords(words, start: start, end: end)
@@ -67,6 +41,38 @@ struct ClipExporter {
         }
         return ExportedClip(title: title, audioURL: audioURL, transcriptURL: transcriptURL,
                             text: transcriptText, start: start, end: end)
+    }
+
+    /// Normalize bounded windows before encoding; mixed-rate composition edits are unreliable on iOS 26.
+    nonisolated private static func prepareAudio(start: Double, end: Double, chunks: [AudioChunk], to url: URL) throws {
+        // Avoid upsampling; retain the lowest native rate in the selected interval.
+        let selected = chunks.filter { $0.end > start && $0.start < end }
+        guard let rate = selected.map(\.sampleRate).min() else { throw ClipError.missingAudio(at: start) }
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1) else {
+            throw ClipError.cannotCreateComposition
+        }
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let snapshot = AudioSnapshot(chunks: chunks.sorted { $0.start < $1.start }, duration: end)
+        let total = Int64(((end - start) * rate).rounded())
+        var written: Int64 = 0
+        while written < total {
+            try Task.checkCancellation()
+            let count = Int(min(Int64(rate * 5), total - written))
+            let lower = start + Double(written) / rate
+            let upper = min(end, start + Double(written + Int64(count)) / rate)
+            let samples = try AudioWindowReader.samples(snapshot: snapshot, start: lower, end: upper, sampleRate: rate)
+            guard !samples.isEmpty, abs(samples.count - count) <= 4,
+                  let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(count)),
+                  let channel = buffer.floatChannelData?[0] else { throw ExportPreparationError(expected: count, actual: samples.count) }
+            buffer.frameLength = AVAudioFrameCount(count)
+            samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: min(count, samples.count)) }
+            // Resampling rounds by a few frames; anchor every window to the export sample clock.
+            if samples.count < count {
+                channel.advanced(by: samples.count).update(repeating: samples.last!, count: count - samples.count)
+            }
+            try file.write(from: buffer)
+            written += Int64(count)
+        }
     }
 
     private static func fileName(for title: String) -> String {
@@ -97,4 +103,10 @@ struct ClipExporter {
         try? FileManager.default.removeItem(at: clip.transcriptURL)
     }
 
+}
+
+private struct ExportPreparationError: LocalizedError {
+    let expected: Int
+    let actual: Int
+    var errorDescription: String? { "Audio conversion produced \(actual) frames; expected \(expected)." }
 }
