@@ -51,6 +51,8 @@ struct ClipExporter {
         guard let session = AVAssetExportSession(
             asset: composition, presetName: AVAssetExportPresetAppleM4A
         ) else { throw ClipError.cannotCreateExportSession }
+        // Bound encoding explicitly: mixed sample-rate edits can extend the inferred end.
+        session.timeRange = CMTimeRange(start: .zero, duration: insertionTime)
         try await session.export(to: audioURL, as: .m4a)
 
         let excerpt = selectedWords(words, start: start, end: end)
