@@ -1,0 +1,23 @@
+name: LectureClipDemo
+options:
+  deploymentTarget:
+    iOS: "27.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    TARGETED_DEVICE_FAMILY: "2"
+targets:
+  LectureClipDemo:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+        excludes:
+          - Info.plist
+    info:
+      path: Sources/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.LectureClipDemo
+        PRODUCT_NAME: LectureClipDemo
+        CODE_SIGN_STYLE: Automatic
