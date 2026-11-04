@@ -52,6 +52,7 @@ final class LectureStore: ObservableObject {
                 }
             }
         } catch { errorMessage = error.localizedDescription }
+        if UserDefaults.standard.bool(forKey: "transcriptionEnabled") { Task { await prepareModel() } }
     }
 
     func prepareModel() async {
@@ -62,6 +63,7 @@ final class LectureStore: ObservableObject {
         do {
             try await transcriber.prepare()
             modelReady = true
+            UserDefaults.standard.set(true, forKey: "transcriptionEnabled")
             transcriptionStatus = "Parakeet V3 ready — transcription stays on this device."
             startRecognition()
         } catch { transcriptionStatus = "Model unavailable: \(error.localizedDescription). Tap Download / Retry." }

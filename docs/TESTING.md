@@ -14,7 +14,18 @@ Run on both iPhone and iPad. Core tests and simulator launch tests do not valida
 
 ## Execution record
 
-Native app build, simulator interaction, real microphone/Parakeet inference, Goodnotes integration and endurance testing require a Mac with full Xcode and enabled device access. Record only executed results here; source inspection is not a passing device test.
+2026-11-04:
+
+- Seven pure Swift timeline tests passed in GitHub Actions.
+- Xcode 27.2 on the connected Mac built the app and ReplayKit extension for both iOS Simulator and unsigned iOS device targets.
+- iPhone 18 Pro / iOS 27.2: three native tests passed (launch, source toggle, durable audio/export); one opt-in live microphone test skipped.
+- iPad Air 13-inch (M4) / iOS 27.2: the same three native tests passed; one opt-in live microphone test skipped.
+- The audio integration test generated six seconds of PCM, wrote/reloaded six CAF chunks, exported a 3.5-second M4A/TXT selection, decoded the M4A, checked selected text, and rejected a missing chunk.
+- A live microphone attempt on the Mac simulator failed inside Apple AudioToolbox's `_ReportRPCTimeout` / `AURemoteIO::Initialize` when opening the input node. Denied permission was also handled visibly. Live capture is not marked passed.
+- T3 `device_open`/`device_list` returned “Agent device access is turned off for this environment.” Native testing used Xcode/Simulator over the authorized SSH connection instead of the T3 Device panel.
+- Real Parakeet inference/accuracy/latency, Foundation Models output quality, cross-app ReplayKit capture, physical-device recording, Goodnotes paste behavior, and 60–90-minute endurance remain unverified.
+
+To opt into the live microphone UI test, set `LECTURECLIP_LIVE_MIC_TEST=1` in the Xcode scheme's Test environment variables on a configured host/device. The default suite uses real file encoding/decoding with generated PCM and explicitly skips microphone hardware; it does not substitute a fake production recorder.
 
 ## System-audio acceptance tests (physical device required)
 

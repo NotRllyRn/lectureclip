@@ -28,7 +28,8 @@ enum SessionStore {
         let folder = (source == .systemAudio ? sharedRoot! : root).appendingPathComponent(session.id.uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
             attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
-        try save(session)
+        do { try save(session) }
+        catch { try? FileManager.default.removeItem(at: folder); throw error }
         return session
     }
 
@@ -40,7 +41,7 @@ enum SessionStore {
         try ([root] + [sharedRoot].compactMap { $0 })
             .filter { FileManager.default.fileExists(atPath: $0.path) }
             .flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }
-            .filter { $0.hasDirectoryPath }
+            .filter { $0.hasDirectoryPath && FileManager.default.fileExists(atPath: $0.appendingPathComponent("session.json").path) }
             .map { try JSONDecoder().decode(LectureSession.self, from: Data(contentsOf: $0.appendingPathComponent("session.json"))) }
             .sorted { $0.createdAt > $1.createdAt }
     }

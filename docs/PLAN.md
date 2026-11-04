@@ -27,7 +27,7 @@ Audio capture does not wait for model download or inference. Disk errors and que
 
 ## Validation constraints
 
-This Linux host has neither Swift nor Xcode. T3 device_open(platform: ios) returned: “Agent device access is turned off for this environment.” Native simulator and physical-device claims require subsequent execution on a connected Mac. Five-second delay, Goodnotes background behavior, clipboard compatibility, battery, thermal and memory behavior are acceptance tests, not guarantees.
+Initial inspection: this Linux host had neither Swift nor Xcode, and T3 device_open(platform: ios) returned: “Agent device access is turned off for this environment.” A Mac was subsequently connected over SSH and Xcode installed. See TESTING.md for executed native checks and remaining physical-device requirements. Five-second delay, Goodnotes background behavior, clipboard compatibility, battery, thermal and memory behavior are acceptance tests, not guarantees.
 
 ## Added scope: system audio
 

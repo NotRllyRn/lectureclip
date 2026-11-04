@@ -8,7 +8,7 @@ A native SwiftUI app for **iPhone and iPad, iOS/iPadOS 26+**. Record lectures, t
 2. Install [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`.
 3. Clone this repository, run `xcodegen generate`, then open `LectureClip.xcodeproj`.
 4. Select your signing team for **LectureClip and LectureClipBroadcast**. Configure unique bundle IDs and a shared App Group (see System audio below). Connect your iPhone/iPad, enable Developer Mode if requested, select it as the run destination, and run.
-5. Tap **Download / Retry Parakeet V3** while online. Model setup can take several minutes and substantial disk space. Once cached, recognition is local. Recording works before model setup finishes.
+5. Tap **Download / Retry Parakeet V3** while online. Model setup can take several minutes and substantial disk space. Once cached, recognition is local and the model reloads automatically on later launches. Recording works before model setup finishes.
 6. Tap **New recording**, allow microphone access, and speak. The counter reports saved sample time, refreshed roughly every two seconds. Gray words are provisional. Stop to finalize the remaining transcript.
 
 The full app uses an App Group and a broadcast extension, requiring an Apple Developer team with those provisioning capabilities. For microphone-only development with a Personal Team, remove the embedded LectureClipBroadcast dependency and App Group entitlement from the app target; system audio will be unavailable. This repository does not contain a signed IPA or TestFlight release.
@@ -42,7 +42,8 @@ The legacy `installTap` API copies incoming PCM buffers before handing them to t
 
 - `swift test`: pure Swift timeline, selection, overlap, persistence, and export-boundary tests; no Apple mobile SDK required.
 - `scripts/check-macos.sh`: core tests plus unsigned simulator/device SDK builds (requires Xcode and XcodeGen).
-- GitHub Actions runs those checks and launch smoke tests on an iPhone and iPad simulator.
+- GitHub Actions runs those checks, app launch/source-toggle tests, and a native PCM→CAF→M4A/TXT integration test on iPhone and iPad simulators.
+- Live microphone UI testing is opt-in: add `LECTURECLIP_LIVE_MIC_TEST=1` to the Xcode scheme's Test environment variables on a host with working audio, or run on a physical device. It is explicitly skipped by default; passing offline audio tests is not proof of microphone capture.
 - See [device acceptance tests](docs/TESTING.md) and [implementation plan](docs/PLAN.md).
 
 Background audio mode supports active microphone recording. It does not guarantee continuous Core ML execution. Approximately five seconds of transcription delay is a target requiring physical-device measurement, especially with Goodnotes foregrounded. Microphone mode does not capture other apps' internal audio; System audio uses ReplayKit with explicit user consent. A simulator cannot establish battery, thermal, Neural Engine or sustained background behavior.
