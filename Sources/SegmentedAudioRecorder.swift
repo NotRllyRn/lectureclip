@@ -13,10 +13,10 @@ final class SegmentedAudioRecorder: ObservableObject {
     private var engine: AVAudioEngine?
     private var writer: ChunkWriter?
     private var observers: [NSObjectProtocol] = []
+    private var configurationObserver: NSObjectProtocol?
 
     init() {
-        for name in [AVAudioSession.interruptionNotification, AVAudioSession.mediaServicesWereResetNotification,
-                     Notification.Name.AVAudioEngineConfigurationChange] {
+        for name in [AVAudioSession.interruptionNotification, AVAudioSession.mediaServicesWereResetNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                 if note.name == AVAudioSession.interruptionNotification,
                    (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) != AVAudioSession.InterruptionType.began.rawValue { return }
@@ -56,6 +56,15 @@ final class SegmentedAudioRecorder: ObservableObject {
             engine = newEngine
             writer = newWriter
             isRecording = true
+            // Register after startup; initial engine configuration is not an interruption.
+            configurationObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: newEngine, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.isRecording else { return }
+                    self.onInterruption?("Audio input changed. Saved audio is preserved; start a new recording to continue.")
+                }
+            }
         } catch {
             try? session.setActive(false, options: .notifyOthersOnDeactivation)
             throw error
@@ -68,6 +77,8 @@ final class SegmentedAudioRecorder: ObservableObject {
     }
 
     func stop() async throws -> AudioSnapshot {
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+        configurationObserver = nil
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil

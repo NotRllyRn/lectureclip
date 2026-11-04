@@ -14,11 +14,14 @@ final class LectureClipUITests: XCTestCase {
     }
 
     @MainActor
-    func testRecordAndExportAudioWithoutModel() {
+    func testRecordAndExportAudioWithoutModel() throws {
+        guard ProcessInfo.processInfo.environment["LECTURECLIP_LIVE_MIC_TEST"] == "1" else {
+            throw XCTSkip("Live capture requires a working host microphone/audio service. Enable LECTURECLIP_LIVE_MIC_TEST in the test scheme on a configured host or physical device.")
+        }
         let app = XCUIApplication()
         addUIInterruptionMonitor(withDescription: "Microphone permission") { alert in
             for title in ["Allow", "OK"] where alert.buttons[title].exists {
-                alert.buttons[title].tap()
+                alert.buttons[title].firstMatch.tap()
                 return true
             }
             return false
@@ -26,7 +29,10 @@ final class LectureClipUITests: XCTestCase {
         app.launch()
         app.buttons["Microphone"].tap()
         app.buttons["recordButton"].tap()
-        app.tap() // Lets XCTest handle a pending system microphone permission alert.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        if springboard.buttons["Allow"].firstMatch.waitForExistence(timeout: 5) { springboard.buttons["Allow"].firstMatch.tap() }
+        else if springboard.buttons["OK"].firstMatch.exists { springboard.buttons["OK"].firstMatch.tap() }
+        app.tap() // Fallback interruption monitor for other OS permission wording.
         XCTAssertTrue(app.buttons["Stop recording"].waitForExistence(timeout: 10))
         let advanced = app.buttons["Advanced Export"]
         let savedAudio = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: advanced)

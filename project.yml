@@ -63,6 +63,16 @@ targets:
         CODE_SIGN_ENTITLEMENTS: BroadcastExtension/Broadcast.entitlements
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
+  LectureClipTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [AppTests]
+    dependencies:
+      - target: LectureClip
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.notrllyrn.LectureClip.Tests
   LectureClipUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -79,4 +89,4 @@ schemes:
       targets:
         LectureClip: all
     test:
-      targets: [LectureClipUITests]
+      targets: [LectureClipTests, LectureClipUITests]
