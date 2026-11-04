@@ -21,7 +21,14 @@ final class ChunkWriter: @unchecked Sendable {
         self.onFailure = onFailure
     }
 
+    // AVAudioEngine invokes this on its audio thread, never the main actor.
+    // Keep the callback Sendable even when it is installed from a MainActor method.
+    func makeAudioTap() -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
+        { @Sendable [self] buffer, _ in enqueue(buffer) }
+    }
+
     func enqueue(_ source: AVAudioPCMBuffer) {
+        guard source.frameLength > 0 else { return }
         guard slots.wait(timeout: .now()) == .success else {
             onFailure("Audio storage could not keep up. Recording stopped; saved audio is preserved.")
             return
@@ -34,11 +41,16 @@ final class ChunkWriter: @unchecked Sendable {
         buffer.frameLength = source.frameLength
         let src = UnsafeMutableAudioBufferListPointer(source.mutableAudioBufferList)
         let dst = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
-        for (from, to) in zip(src, dst) {
-            if let fromData = from.mData, let toData = to.mData {
-                memcpy(toData, fromData, Int(from.mDataByteSize))
-            }
+        let byteCount = Int(source.frameLength) * Int(source.format.streamDescription.pointee.mBytesPerFrame)
+        guard src.count == dst.count, zip(src, dst).allSatisfy({
+            $0.0.mData != nil && $0.1.mData != nil &&
+            Int($0.0.mDataByteSize) >= byteCount && Int($0.1.mDataByteSize) >= byteCount
+        }) else {
+            slots.signal()
+            onFailure("The microphone returned an invalid audio buffer.")
+            return
         }
+        for (from, to) in zip(src, dst) { memcpy(to.mData!, from.mData!, byteCount) }
         // AVAudioPCMBuffer isn't Sendable. Ownership transfers exclusively to the queue.
         let owned = OwnedBuffer(buffer: buffer)
         queue.async { [self, owned] in

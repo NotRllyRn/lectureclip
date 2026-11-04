@@ -4,6 +4,39 @@ import XCTest
 
 final class AudioPipelineTests: XCTestCase {
     @MainActor
+    func testRecordingTapAcceptsBackgroundAudioWithSpareCapacity() async throws {
+        for interleaved in [false, true] {
+            let session = try SessionStore.create()
+            defer { try? FileManager.default.removeItem(at: SessionStore.directory(session.id)) }
+            let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000,
+                                                    channels: 2, interleaved: interleaved))
+            let writer = ChunkWriter(format: format, directory: SessionStore.directory(session.id)) { _ in }
+            let tap = writer.makeAudioTap()
+            try await Task.detached {
+                XCTAssertFalse(Thread.isMainThread)
+                let inputFormat = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000,
+                                                             channels: 2, interleaved: interleaved))
+                let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: 16_000))
+                buffer.frameLength = 800
+                for audio in UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList) {
+                    let data = try XCTUnwrap(audio.mData).assumingMemoryBound(to: Float.self)
+                    data.update(repeating: 0.25, count: Int(audio.mDataByteSize) / MemoryLayout<Float>.size)
+                }
+                tap(buffer, AVAudioTime(sampleTime: 0, atRate: 16_000))
+            }.value
+            let snapshot = try await writer.snapshot()
+            XCTAssertEqual(snapshot.duration, 0.05, accuracy: 0.0001)
+            let chunk = try XCTUnwrap(snapshot.chunks.first)
+            let file = try AVAudioFile(forReading: chunk.url)
+            XCTAssertEqual(file.length, 800)
+            let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 800))
+            try file.read(into: output)
+            XCTAssertEqual(output.floatChannelData?[0][799], 0.25)
+            XCTAssertEqual(output.floatChannelData?[1][799], 0.25)
+        }
+    }
+
+    @MainActor
     func testDurableChunksAndSelectedM4AExport() async throws {
         let session = try SessionStore.create()
         let directory = SessionStore.directory(session.id)

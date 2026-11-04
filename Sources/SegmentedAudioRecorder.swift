@@ -48,9 +48,8 @@ final class SegmentedAudioRecorder: ObservableObject {
                     self.onInterruption?(message)
                 }
             }
-            input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(format.sampleRate * 0.2), format: format) { buffer, _ in
-                newWriter.enqueue(buffer)
-            }
+            input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(format.sampleRate * 0.2),
+                             format: format, block: newWriter.makeAudioTap())
             do { try newEngine.start() }
             catch { input.removeTap(onBus: 0); throw error }
             engine = newEngine

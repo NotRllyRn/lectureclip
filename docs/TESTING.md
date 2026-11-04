@@ -35,3 +35,13 @@ To opt into the live microphone UI test, set `LECTURECLIP_LIVE_MIC_TEST=1` in th
 4. Cancel the broadcast-start sheet, cancel setup in the app, then select Microphone. Check that a stale prepared request cannot silently start a recording.
 5. Test pause/resume, route/format changes, extension termination, app relaunch during a live broadcast, and re-opening after more than 15 seconds without a heartbeat. Saved sealed chunks must remain exportable.
 6. Run the 60–90-minute endurance test with the lecture app foregrounded. System capture does not keep the main app alive for continuous ASR, so measure foreground catch-up separately from microphone-background latency.
+
+## 1.0.1 recording-start fix
+
+A user reported immediate termination on iOS 27.0 / iPhone 17 Pro Max with the built-in microphone. The provided attachment was the original 1.0 IPA, not an Apple crash report, so the device's exact termination reason remains unconfirmed.
+
+Compiler inspection found that the original tap closure inherited MainActor isolation from `SegmentedAudioRecorder.start`. Its generated code called `_checkExpectedExecutor` before writing audio, although AVAudioEngine delivers the callback on its audio thread. The callback now comes from an explicitly Sendable, nonisolated factory on ChunkWriter. Generated code confirms the actor check is gone. Buffer copying also uses the valid frame byte count and checks source/destination bounds.
+
+The native regression test invokes the exact installed callback from a detached task, with spare buffer capacity in interleaved and non-interleaved stereo formats. Both cases passed, including persisted duration and sample-value checks; the existing CAF/M4A/TXT integration test also passed. A physical-device retest of build 2 is still required.
+
+To report a crash: Settings → Privacy & Security → Analytics & Improvements → Analytics Data → latest LectureClip entry → Share → Save to Files, then attach that `.ips` file. An IPA is an installer, not a log. If no LectureClip entry exists, check the nearest JetsamEvent entry for LectureClip (memory termination); share only the relevant report, not the entire analytics archive.
