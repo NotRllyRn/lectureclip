@@ -1,5 +1,44 @@
-<img src="assets/icon.svg" width="64" height="64" alt="">
-
 # LectureClip
 
-Created in [T3 Code](https://t3.codes).
+A native SwiftUI app for **iPhone and iPad, iOS/iPadOS 26+**. Record lectures, transcribe locally with Parakeet TDT V3, and export matching M4A audio and text for study notes.
+
+## Run on your device
+
+1. On a Mac, install full Xcode 26 or newer, open it and install the iOS SDK/simulator. Select it with `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` if necessary.
+2. Install [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`.
+3. Clone this repository, run `xcodegen generate`, then open `LectureClip.xcodeproj`.
+4. Select the LectureClip target, your signing team, and a unique bundle identifier. Connect your iPhone/iPad, enable Developer Mode if requested, select it as the run destination, and run.
+5. Tap **Download / Retry Parakeet V3** while online. Model setup can take several minutes and substantial disk space. Once cached, recognition is local. Recording works before model setup finishes.
+6. Tap **New recording**, allow microphone access, and speak. The counter reports saved sample time, refreshed roughly every two seconds. Gray words are provisional. Stop to finalize the remaining transcript.
+
+A paid developer account is not required for local development signing, but free provisioning has Apple's limits. This repository does not contain a signed IPA or a TestFlight release.
+
+## Export and recovery
+
+- **Quick Export + Copy** exports from the previous successful Quick Export boundary to the current finalized transcript boundary. Silence also advances the boundary. Pending audio remains for the next export. A failed export leaves the cursor unchanged.
+- **Advanced Export** selects any saved range without moving the Quick Export cursor. It can export audio whose transcript is still pending; the preview contains finalized words only.
+- Both workflows save M4A/TXT files in Documents/Exports. Clipboard support depends on the receiving app; **Share clip** and **Copy text** are fallbacks. Goodnotes may not accept an audio clipboard item.
+- The folder menu opens previous recordings. Relaunch recovers indexed, sealed CAF chunks and transcription/export progress. An unsealed tail can be lost on forced termination. Starting a new recording preserves prior sessions.
+- Files are accessible through Files/Finder sharing. No automatic retention policy deletes lectures. Do not edit or remove active session files while recording.
+- **Summarize saved transcript** uses Apple Foundation Models when Apple Intelligence is available. Summaries process the currently finalized transcript in bounded sections and are generated only after recording stops.
+
+## Architecture
+
+`Core/` contains pure Swift timestamp and export rules. `SegmentedAudioRecorder` owns microphone capture and a bounded serial disk writer. `SessionStore` persists sealed chunk indexes separately from transcript metadata. `ParakeetTranscriber` owns FluidAudio and bounded 16 kHz mono conversion. `LectureStore` orchestrates one inference at a time, export, recovery and summaries. SwiftUI views expose these actions without model logic.
+
+The rolling recognizer reads up to eight seconds of context, retains a two-second provisional tail, and schedules again after two seconds during recording. Backlogs are processed sequentially from disk. Timestamp overlap merging is a heuristic, not a claim of perfect word alignment. FluidAudio is pinned to a specific revision and explicitly loads `.v3`; changing it requires rebuilding and validation.
+
+The legacy `installTap` API copies incoming PCM buffers before handing them to the writer. This avoids requiring the prototype's iOS 27-only `installAudioTap`. Chunks seal around five seconds, or earlier for snapshots. A bounded queue stops recording visibly on overflow instead of silently dropping data. Interruptions and input changes stop capture; start a new session to continue.
+
+## Verification
+
+- `swift test`: pure Swift timeline, selection, overlap, persistence, and export-boundary tests; no Apple mobile SDK required.
+- `scripts/check-macos.sh`: core tests plus unsigned simulator/device SDK builds (requires Xcode and XcodeGen).
+- GitHub Actions runs those checks and launch smoke tests on an iPhone and iPad simulator.
+- See [device acceptance tests](docs/TESTING.md) and [implementation plan](docs/PLAN.md).
+
+Background audio mode supports active microphone recording. It does not guarantee continuous Core ML execution. Approximately five seconds of transcription delay is a target requiring physical-device measurement, especially with Goodnotes foregrounded. The app never records other apps' internal audio. A simulator cannot establish battery, thermal, Neural Engine or sustained background behavior.
+
+Audio and transcripts remain local unless shared. First model setup downloads model assets from FluidAudio's model host. Seek permission before recording lectures.
+
+The supplied prototype's original documentation is preserved in [docs/PROTOTYPE.md](docs/PROTOTYPE.md).

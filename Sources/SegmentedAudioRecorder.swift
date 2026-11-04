@@ -105,7 +105,7 @@ final class SegmentedAudioRecorder: ObservableObject {
 
     init() {
         for name in [AVAudioSession.interruptionNotification, AVAudioSession.mediaServicesWereResetNotification,
-                     AVAudioEngine.configurationChangeNotification] {
+                     Notification.Name.AVAudioEngineConfigurationChange] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                 if note.name == AVAudioSession.interruptionNotification,
                    (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) != AVAudioSession.InterruptionType.began.rawValue { return }

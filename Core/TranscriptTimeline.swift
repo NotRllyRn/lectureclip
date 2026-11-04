@@ -10,6 +10,7 @@ struct TranscriptTimeline: Codable, Sendable {
     mutating func merge(_ incoming: [TranscriptWord], windowEnd: Double, isLast: Bool) {
         let oldBoundary = finalizedThrough
         let valid = incoming.filter { $0.start.isFinite && $0.end.isFinite && $0.end > $0.start }
+            .sorted { $0.start < $1.start }
         var boundary = max(oldBoundary, isLast ? windowEnd : windowEnd - 2)
         if let crossing = valid.first(where: { $0.start < boundary && $0.end > boundary }) {
             boundary = max(oldBoundary, crossing.start)

@@ -3,3 +3,5 @@ DerivedData/
 *.xcodeproj/
 *.xcworkspace/
 .DS_Store
+DerivedData-device/
+*.xcresult/

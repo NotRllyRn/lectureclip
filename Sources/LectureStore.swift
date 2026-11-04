@@ -64,12 +64,12 @@ final class LectureStore: ObservableObject {
         await cancelRecognition()
         do {
             let newSession = try SessionStore.create()
+            sessions = try SessionStore.list()
             try await recorder.start(directory: SessionStore.directory(newSession.id))
             session = newSession
             snapshot = AudioSnapshot(chunks: [], duration: 0)
             lastClip = nil
             isRecording = true
-            sessions = try SessionStore.list()
             status = "Recording. Audio is saved independently of transcription."
             monitor = Task { [weak self] in
                 while !Task.isCancelled {
@@ -84,11 +84,16 @@ final class LectureStore: ObservableObject {
                 }
             }
             startRecognition()
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            errorMessage = error.localizedDescription
+            startRecognition()
+        }
     }
 
     func stopRecording() async {
         guard isRecording else { return }
+        isBusy = true
+        defer { isBusy = false }
         isRecording = false
         monitor?.cancel()
         monitor = nil
@@ -183,7 +188,8 @@ final class LectureStore: ObservableObject {
     }
 
     func summarize() async {
-        guard !summarizing, !isBusy, !isRecording, var updated = session else { return }
+        guard !summarizing, !isBusy, !isRecording, snapshot.duration - finalizedThrough < 0.025,
+              var updated = session else { return }
         guard SystemLanguageModel.default.availability == .available else {
             errorMessage = "On-device summaries require Apple Intelligence enabled and its model downloaded on a supported device."
             return

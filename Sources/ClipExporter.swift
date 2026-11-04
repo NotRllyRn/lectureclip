@@ -18,7 +18,7 @@ struct ClipExporter {
 
         var cursor = start
         var insertionTime = CMTime.zero
-        let tolerance = 0.025
+        let tolerance = 0.0001
         for chunk in sorted {
             if cursor >= end - tolerance { break }
             let overlapStart = max(cursor, chunk.start)

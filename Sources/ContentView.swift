@@ -116,7 +116,7 @@ struct ContentView: View {
             }
             Button(store.summarizing ? "Summarizing…" : "Summarize saved transcript") { Task { await store.summarize() } }
                 .font(.footnote)
-                .disabled(store.isRecording || store.summarizing || store.isBusy || !store.words.contains(where: \.isFinal))
+                .disabled(store.isRecording || store.summarizing || store.isBusy || store.snapshot.duration - store.finalizedThrough >= 0.025 || !store.words.contains(where: \.isFinal))
         }
     }
 
