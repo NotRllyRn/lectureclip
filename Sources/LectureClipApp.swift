@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct LectureClipDemoApp: App {
+struct LectureClipApp: App {
     var body: some Scene {
         WindowGroup { ContentView() }
     }

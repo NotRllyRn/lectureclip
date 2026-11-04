@@ -1,23 +1,53 @@
-name: LectureClipDemo
+name: LectureClip
 options:
   deploymentTarget:
-    iOS: "27.0"
+    iOS: "26.0"
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    TARGETED_DEVICE_FAMILY: "2"
+    TARGETED_DEVICE_FAMILY: "1,2"
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio.git
+    revision: ee78635d23d52379117554ba72358b65a0612447
 targets:
-  LectureClipDemo:
+  LectureClip:
     type: application
     platform: iOS
     sources:
       - path: Sources
-        excludes:
-          - Info.plist
+        excludes: [Info.plist]
+      - path: Core
+    dependencies:
+      - package: FluidAudio
     info:
       path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: LectureClip
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.LectureClipDemo
-        PRODUCT_NAME: LectureClipDemo
+        PRODUCT_BUNDLE_IDENTIFIER: com.notrllyrn.LectureClip
+        PRODUCT_NAME: LectureClip
         CODE_SIGN_STYLE: Automatic
+  LectureClipUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: LectureClip
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.notrllyrn.LectureClip.UITests
+schemes:
+  LectureClip:
+    build:
+      targets:
+        LectureClip: all
+    test:
+      targets: [LectureClipUITests]

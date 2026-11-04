@@ -16,7 +16,7 @@ struct TranscriptWord: Identifiable, Hashable, Codable, Sendable {
     }
 }
 
-struct AudioChunk: Identifiable, Sendable {
+struct AudioChunk: Identifiable, Codable, Sendable {
     let id: UUID
     let url: URL
     let startFrame: Int64
