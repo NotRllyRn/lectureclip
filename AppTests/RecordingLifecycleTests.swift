@@ -1,9 +1,25 @@
 import AVFoundation
+import ActivityKit
 import XCTest
 @testable import LectureClip
 
 @MainActor
 final class RecordingLifecycleTests: XCTestCase {
+    func testRecordingLiveActivityCanStartAndEnd() async throws {
+        try XCTSkipUnless(ActivityAuthorizationInfo().areActivitiesEnabled, "Live Activities are disabled on this test host.")
+        let activity = RecordingActivity()
+        await activity.end()
+        try activity.start(elapsed: 30)
+        let active = Activity<RecordingActivityAttributes>.activities
+        XCTAssertEqual(active.count, 1)
+        XCTAssertEqual(active.first?.activityState, .active)
+        if let start = active.first?.content.state.timerStart {
+            XCTAssertEqual(Date().timeIntervalSince(start), 30, accuracy: 3)
+        }
+        await activity.end()
+        XCTAssertTrue(Activity<RecordingActivityAttributes>.activities.allSatisfy { $0.activityState != .active })
+    }
+
     func testShortcutRecordingRequiresActivityAndEndsItOnStopAndFailure() async throws {
         let previousSelection = UserDefaults.standard.string(forKey: "selectedSessionID")
         let transcriptionEnabled = UserDefaults.standard.bool(forKey: "transcriptionEnabled")
