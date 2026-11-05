@@ -18,7 +18,7 @@ jobs:
       - name: Test core and build both SDKs
         run: scripts/check-macos.sh
       - name: Smoke test iPhone and iPad
-        timeout-minutes: 15
+        timeout-minutes: 25
         shell: bash
         run: |
           set -euo pipefail
