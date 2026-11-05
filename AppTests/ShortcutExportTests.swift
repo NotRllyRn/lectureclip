@@ -61,6 +61,42 @@ final class ShortcutExportTests: XCTestCase {
         XCTAssertEqual(repeated.value, false)
     }
 
+    func testBackgroundFileExportBypassesClipboardAndReturnsFiles() async throws {
+        let saved = try await fixture()
+        let previousSelection = UserDefaults.standard.string(forKey: "selectedSessionID")
+        defer {
+            try? FileManager.default.removeItem(at: SessionStore.directory(saved.id))
+            UserDefaults.standard.set(previousSelection, forKey: "selectedSessionID")
+        }
+        let store = LectureStore(intelligence: UnavailableIntelligence(), restore: false, copyClip: { _ in
+            XCTFail("File handoff must not access the background clipboard")
+            return false
+        })
+        await store.open(saved)
+        let exported = await store.quickExportFilesFromShortcut()
+        let clip = try XCTUnwrap(exported)
+        defer { ClipExporter.removeFiles(clip) }
+        XCTAssertEqual(store.session?.timeline.quickExportCursor, 2)
+        XCTAssertGreaterThan(try AVAudioFile(forReading: clip.audioURL).length, 0)
+        XCTAssertTrue(try String(contentsOf: clip.transcriptURL, encoding: .utf8).contains("Selected speech."))
+        let repeated = await store.quickExportFilesFromShortcut()
+        XCTAssertNil(repeated)
+
+        // Reset only this fixture's cursor and exercise the public file-valued intent.
+        try SessionStore.save(saved)
+        await LectureStore.shared.open(saved)
+        let result = try await QuickExportFilesIntent().perform()
+        let files = try XCTUnwrap(result.value)
+        defer { if let clip = LectureStore.shared.lastClip { ClipExporter.removeFiles(clip) } }
+        XCTAssertEqual(files.count, 2)
+        XCTAssertEqual(files.first?.type, .mpeg4Audio)
+        XCTAssertEqual(files.last?.type, .plainText)
+        XCTAssertFalse(files[0].data.isEmpty)
+        XCTAssertTrue(String(data: files[1].data, encoding: .utf8)?.contains("Selected speech.") == true)
+        let empty = try await QuickExportFilesIntent().perform()
+        XCTAssertEqual(empty.value?.count, 0)
+    }
+
     private func fixture() async throws -> LectureSession {
         var session = try SessionStore.create()
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))

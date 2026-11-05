@@ -29,6 +29,7 @@ final class LectureStore: ObservableObject {
     private var automaticNotesPending = false
     private var earlyNotesAttempted: Set<UUID> = []
     private var finalNotesAttempted: Set<UUID> = []
+    private let recordingActivity: any RecordingActivityControlling
     private let recorder: any LectureRecording
     private let transcriber = ParakeetTranscriber()
     private var monitor: Task<Void, Never>?
@@ -53,7 +54,9 @@ final class LectureStore: ObservableObject {
 
     init(intelligence: any LectureIntelligence = OnDeviceIntelligence(), restore: Bool = true,
          copyClip: @escaping @MainActor (ExportedClip) -> Bool = ClipClipboard.copy,
-         recorder: any LectureRecording = SegmentedAudioRecorder()) {
+         recorder: any LectureRecording = SegmentedAudioRecorder(),
+         recordingActivity: any RecordingActivityControlling = RecordingActivity()) {
+        self.recordingActivity = recordingActivity
         self.recorder = recorder
         self.copyClip = copyClip
         self.intelligence = intelligence
@@ -65,6 +68,7 @@ final class LectureStore: ObservableObject {
             }
         }
         guard restore else { return }
+        Diagnostics.shortcut("Restoring store in a new process/store instance.")
         do {
             sessions = try SessionStore.list()
             let broadcast = try? BroadcastStorage.read(BroadcastStatus.self, name: "status.json")
@@ -121,7 +125,7 @@ final class LectureStore: ObservableObject {
     }
 
     @discardableResult
-    func startRecording(reportErrors: Bool = true) async -> Bool {
+    func startRecording(reportErrors: Bool = true, requiresActivity: Bool = false) async -> Bool {
         guard !Task.isCancelled, !isBusy, !exporting, !isRecordingActive, !broadcastPrepared else { return false }
         if source == .systemAudio { await prepareBroadcast(); return false }
         isBusy = true
@@ -132,7 +136,7 @@ final class LectureStore: ObservableObject {
         do {
             let newSession = try SessionStore.create()
             created = newSession
-            try await beginMicrophone(newSession, existing: AudioSnapshot(chunks: [], duration: 0))
+            try await beginMicrophone(newSession, existing: AudioSnapshot(chunks: [], duration: 0), requiresActivity: requiresActivity)
             return true
         } catch {
             if let created, (try? SessionStore.snapshot(created.id).duration) == 0 {
@@ -146,7 +150,7 @@ final class LectureStore: ObservableObject {
     }
 
     @discardableResult
-    func resumeRecording(reportErrors: Bool = true) async -> Bool {
+    func resumeRecording(reportErrors: Bool = true, requiresActivity: Bool = false) async -> Bool {
         guard !Task.isCancelled, !isBusy, !exporting, !isRecordingActive, !broadcastPrepared,
               let current = session, current.source != .systemAudio else { return false }
         isBusy = true
@@ -155,7 +159,7 @@ final class LectureStore: ObservableObject {
         monitor?.cancel()
         do {
             let existing = try SessionStore.snapshot(current.id)
-            try await beginMicrophone(current, existing: existing)
+            try await beginMicrophone(current, existing: existing, requiresActivity: requiresActivity)
             finalNotesAttempted.remove(current.id)
             if session?.summaryThrough == nil { earlyNotesAttempted.remove(current.id) }
             return true
@@ -167,9 +171,14 @@ final class LectureStore: ObservableObject {
         }
     }
 
-    private func beginMicrophone(_ saved: LectureSession, existing: AudioSnapshot) async throws {
-        try await recorder.start(directory: SessionStore.directory(saved.id), existing: existing)
+    private func beginMicrophone(_ saved: LectureSession, existing: AudioSnapshot, requiresActivity: Bool) async throws {
         do {
+            if requiresActivity {
+                await recordingActivity.end() // Remove indicators left by a terminated recording process.
+                try Task.checkCancellation()
+                try recordingActivity.start(elapsed: existing.duration)
+            }
+            try await recorder.start(directory: SessionStore.directory(saved.id), existing: existing)
             try Task.checkCancellation()
             // Preserve notes or a manual rename completed while capture was starting.
             var updated = session?.id == saved.id ? session! : saved
@@ -191,6 +200,7 @@ final class LectureStore: ObservableObject {
             }
         } catch {
             _ = try? await recorder.stop()
+            if requiresActivity { await recordingActivity.end() }
             throw error
         }
     }
@@ -224,11 +234,13 @@ final class LectureStore: ObservableObject {
         monitor = nil
         do {
             snapshot = try await recorder.stop()
+            await recordingActivity.end()
             try markSelectedPaused()
             status = "Recording paused. Continue this lecture or start a new recording."
             startRecognition()
             return true
         } catch {
+            await recordingActivity.end()
             session?.recordingState = .paused
             if let session { snapshot = (try? SessionStore.snapshot(session.id)) ?? snapshot }
             reportRecordingError(error, showAlert: reportErrors)
@@ -247,18 +259,19 @@ final class LectureStore: ObservableObject {
     private func reportRecordingError(_ error: Error, showAlert: Bool) {
         if showAlert { errorMessage = error.localizedDescription }
         Diagnostics.record("Recording action failed: \(error.localizedDescription)")
+        if !showAlert { Diagnostics.shortcut("Recording failed: \(error)") }
     }
 
     func startRecordingFromShortcut() async -> Bool {
         guard UIApplication.shared.isProtectedDataAvailable, AVAudioApplication.shared.recordPermission == .granted,
               !isBusy, !exporting, !isRecordingActive, !broadcastPrepared else { return false }
         source = .microphone
-        return await startRecording(reportErrors: false)
+        return await startRecording(reportErrors: false, requiresActivity: true)
     }
 
     func resumeRecordingFromShortcut() async -> Bool {
         guard UIApplication.shared.isProtectedDataAvailable, AVAudioApplication.shared.recordPermission == .granted else { return false }
-        return await resumeRecording(reportErrors: false)
+        return await resumeRecording(reportErrors: false, requiresActivity: true)
     }
 
     func open(_ saved: LectureSession) async {
@@ -384,7 +397,7 @@ final class LectureStore: ObservableObject {
     }
 
     @discardableResult
-    func export(start: Double? = nil, end: Double? = nil, reportErrors: Bool = true) async -> Bool {
+    func export(start: Double? = nil, end: Double? = nil, reportErrors: Bool = true, copyToClipboard: Bool = true) async -> Bool {
         guard !Task.isCancelled, !exporting, !isBusy, let id = session?.id else { return false }
         exporting = true
         defer { exporting = false }
@@ -405,7 +418,7 @@ final class LectureStore: ObservableObject {
             updated.clips = (updated.clips ?? []) + [clip]
             do {
                 try Task.checkCancellation()
-                guard copyClip(clip) else { throw ClipError.clipboardUnavailable }
+                if copyToClipboard, !copyClip(clip) { throw ClipError.clipboardUnavailable }
             } catch {
                 ClipExporter.removeFiles(clip)
                 throw error
@@ -414,11 +427,12 @@ final class LectureStore: ObservableObject {
             // Retrying may copy the same interval, but must never skip it.
             try persist(updated)
             lastClip = clip
-            status = "Copied \(clockString(range.lowerBound))–\(clockString(range.upperBound)). Files saved in Exports."
+            status = "\(copyToClipboard ? "Copied" : "Exported") \(clockString(range.lowerBound))–\(clockString(range.upperBound)). Files saved in Exports."
             return true
         } catch {
             if reportErrors { errorMessage = error.localizedDescription }
             Diagnostics.record("Export failed: \(error.localizedDescription)")
+            if !reportErrors { Diagnostics.shortcut("Export failed: \(error)") }
             return false
         }
     }
@@ -426,6 +440,23 @@ final class LectureStore: ObservableObject {
     func quickExportFromShortcut() async -> Bool {
         guard UIApplication.shared.isProtectedDataAvailable else { return false }
         return await export(reportErrors: false)
+    }
+
+    func quickExportFilesFromShortcut() async -> ExportedClip? {
+        guard UIApplication.shared.isProtectedDataAvailable else { return nil }
+        guard await export(reportErrors: false, copyToClipboard: false) else { return nil }
+        return lastClip
+    }
+
+    func runShortcut(_ name: String, operation: () async -> Bool) async -> Bool {
+        Diagnostics.shortcut("\(name) requested: \(shortcutState)")
+        let result = await operation()
+        Diagnostics.shortcut("\(name) result=\(result): \(shortcutState)")
+        return result
+    }
+
+    private var shortcutState: String {
+        "active=\(isRecordingActive), paused=\(isRecordingPaused), busy=\(isBusy), exporting=\(exporting), protected=\(UIApplication.shared.isProtectedDataAvailable), micPermission=\(AVAudioApplication.shared.recordPermission.rawValue), hasSession=\(session != nil), source=\(source), saved=\(snapshot.duration), finalized=\(finalizedThrough), exportCursor=\(session?.timeline.quickExportCursor ?? 0), cancelled=\(Task.isCancelled)"
     }
 
     private func resetNotesStatus() {

@@ -4,6 +4,42 @@ import XCTest
 
 @MainActor
 final class RecordingLifecycleTests: XCTestCase {
+    func testShortcutRecordingRequiresActivityAndEndsItOnStopAndFailure() async throws {
+        let previousSelection = UserDefaults.standard.string(forKey: "selectedSessionID")
+        let transcriptionEnabled = UserDefaults.standard.bool(forKey: "transcriptionEnabled")
+        UserDefaults.standard.set(false, forKey: "transcriptionEnabled")
+        let capture = TestRecordingCapture()
+        let activity = TestRecordingActivity()
+        let store = LectureStore(intelligence: NoRecordingNotes(), restore: false, recorder: capture, recordingActivity: activity)
+        defer {
+            if let id = store.session?.id { try? FileManager.default.removeItem(at: SessionStore.directory(id)) }
+            UserDefaults.standard.set(previousSelection, forKey: "selectedSessionID")
+            UserDefaults.standard.set(transcriptionEnabled, forKey: "transcriptionEnabled")
+        }
+        activity.fail = true
+        let refused = await store.startRecording(reportErrors: false, requiresActivity: true)
+        XCTAssertFalse(refused)
+        XCTAssertFalse(capture.isRecording)
+        XCTAssertNil(store.session)
+        activity.fail = false
+        let started = await store.startRecording(reportErrors: false, requiresActivity: true)
+        XCTAssertTrue(started)
+        XCTAssertTrue(activity.active)
+        let stopped = await store.stopRecording(reportErrors: false)
+        XCTAssertTrue(stopped)
+        XCTAssertFalse(activity.active)
+        let resumed = await store.resumeRecording(reportErrors: false, requiresActivity: true)
+        XCTAssertTrue(resumed)
+        XCTAssertEqual(activity.elapsed, 1, accuracy: 0.001)
+        XCTAssertTrue(activity.active)
+        _ = await store.stopRecording(reportErrors: false)
+        capture.failNextStart = true
+        let failed = await store.resumeRecording(reportErrors: false, requiresActivity: true)
+        XCTAssertFalse(failed)
+        XCTAssertFalse(activity.active)
+        XCTAssertTrue(store.isRecordingPaused)
+    }
+
     func testStartPauseResumeAndNewLecturePreserveMetadata() async throws {
         let transcriptionEnabled = UserDefaults.standard.bool(forKey: "transcriptionEnabled")
         UserDefaults.standard.set(false, forKey: "transcriptionEnabled")
@@ -206,4 +242,17 @@ private struct NoRecordingNotes: LectureIntelligence {
     var isAvailable: Bool { false }
     func title(for text: String) async throws -> String { XCTFail("Unexpected model call"); return "" }
     func summary(for text: String) async throws -> String { XCTFail("Unexpected model call"); return "" }
+}
+
+@MainActor
+private final class TestRecordingActivity: RecordingActivityControlling {
+    var active = false
+    var fail = false
+    var elapsed = 0.0
+    func start(elapsed: TimeInterval) throws {
+        if fail { throw ClipError.microphoneDenied }
+        self.elapsed = elapsed
+        active = true
+    }
+    func end() async { active = false }
 }

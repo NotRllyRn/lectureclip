@@ -5,8 +5,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "1.0.9"
-    CURRENT_PROJECT_VERSION: "10"
+    MARKETING_VERSION: "1.0.10"
+    CURRENT_PROJECT_VERSION: "11"
     TARGETED_DEVICE_FAMILY: "1,2"
 packages:
   FluidAudio:
@@ -20,7 +20,10 @@ targets:
       - path: Sources
         excludes: [Info.plist, LectureClip.entitlements]
       - path: Core
+      - path: ActivityShared
     dependencies:
+      - target: LectureClipRecordingWidget
+        embed: true
       - package: FluidAudio
       - target: LectureClipBroadcast
         embed: true
@@ -32,6 +35,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSMicrophoneUsageDescription: Record lectures for private study and audio-clip export.
         UIBackgroundModes: [audio]
+        NSSupportsLiveActivities: true
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
@@ -67,6 +71,27 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.notrllyrn.LectureClip.Broadcast
         CODE_SIGN_ENTITLEMENTS: BroadcastExtension/Broadcast.entitlements
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+  LectureClipRecordingWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: RecordingWidget
+        excludes: [Info.plist]
+      - path: ActivityShared
+    info:
+      path: RecordingWidget/Info.plist
+      properties:
+        CFBundleDisplayName: LectureClip Recording
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.notrllyrn.LectureClip.RecordingWidget
+        CODE_SIGN_STYLE: Automatic
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
   LectureClipTests:

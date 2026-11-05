@@ -1,18 +1,19 @@
 import AppIntents
 
-struct StartRecordingIntent: AudioRecordingIntent {
+struct StartRecordingIntent: AudioRecordingIntent, LiveActivityIntent {
     static var title: LocalizedStringResource { "Start New Recording" }
     static var description: IntentDescription {
-        IntentDescription("Starts a new microphone lecture. Returns true if started, false if busy, already recording, or unavailable. Grant microphone permission in LectureClip first and unlock the device.")
+        IntentDescription("Starts a new microphone lecture. Returns true if started, false if busy, already recording, or unavailable. Grant microphone permission, enable Live Activities for LectureClip, and unlock the device.")
     }
     static var supportedModes: IntentModes { .background }
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
-        .result(value: await LectureStore.shared.startRecordingFromShortcut())
+        let store = LectureStore.shared
+        return .result(value: await store.runShortcut("Start recording") { await store.startRecordingFromShortcut() })
     }
 }
 
-struct StopRecordingIntent: AudioRecordingIntent {
+struct StopRecordingIntent: AudioRecordingIntent, LiveActivityIntent {
     static var title: LocalizedStringResource { "Stop Recording" }
     static var description: IntentDescription {
         IntentDescription("Stops microphone capture and saves the current lecture as paused so it can be continued. Returns true on success, false if no microphone recording is active or stopping fails.")
@@ -20,19 +21,21 @@ struct StopRecordingIntent: AudioRecordingIntent {
     static var supportedModes: IntentModes { .background }
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
-        .result(value: await LectureStore.shared.stopRecording(reportErrors: false))
+        let store = LectureStore.shared
+        return .result(value: await store.runShortcut("Stop recording") { await store.stopRecording(reportErrors: false) })
     }
 }
 
-struct ResumeRecordingIntent: AudioRecordingIntent {
+struct ResumeRecordingIntent: AudioRecordingIntent, LiveActivityIntent {
     static var title: LocalizedStringResource { "Resume Recording" }
     static var description: IntentDescription {
-        IntentDescription("Continues the current or last-selected microphone lecture, appending audio without including paused time. Returns true if resumed, false if unavailable or already recording. Requires microphone permission and an unlocked device.")
+        IntentDescription("Continues the current or last-selected microphone lecture, appending audio without including paused time. Returns true if resumed, false if unavailable or already recording. Requires microphone permission, Live Activities enabled, and an unlocked device.")
     }
     static var supportedModes: IntentModes { .background }
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
-        .result(value: await LectureStore.shared.resumeRecordingFromShortcut())
+        let store = LectureStore.shared
+        return .result(value: await store.runShortcut("Resume recording") { await store.resumeRecordingFromShortcut() })
     }
 }
 

@@ -31,11 +31,12 @@ final class SegmentedAudioRecorder: ObservableObject, LectureRecording {
     func start(directory: URL, existing: AudioSnapshot = AudioSnapshot(chunks: [], duration: 0)) async throws {
         guard !isRecording else { return }
         try await Task.detached { try Self.validate(existing) }.value
-        let granted = await AVAudioApplication.requestRecordPermission()
+        let granted = AVAudioApplication.shared.recordPermission == .granted ? true : await AVAudioApplication.requestRecordPermission()
         guard granted else { throw ClipError.microphoneDenied }
         try Task.checkCancellation()
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
+        Diagnostics.shortcut("Activating microphone audio session.")
         try session.setActive(true)
         do {
             let newEngine = AVAudioEngine()
@@ -52,6 +53,7 @@ final class SegmentedAudioRecorder: ObservableObject, LectureRecording {
             }
             input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(format.sampleRate * 0.2),
                              format: format, block: newWriter.makeAudioTap())
+            Diagnostics.shortcut("Starting microphone engine at \(format.sampleRate) Hz, \(format.channelCount) channels.")
             do { try newEngine.start() }
             catch { input.removeTap(onBus: 0); throw error }
             engine = newEngine

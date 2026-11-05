@@ -11,6 +11,12 @@ enum Diagnostics {
         UserDefaults.standard.set(Array(events.suffix(80)), forKey: key)
     }
 
+    static func shortcut(_ message: String) {
+        var events = UserDefaults.standard.stringArray(forKey: "shortcutDiagnostics") ?? []
+        events.append("\(Date().ISO8601Format()) pid=\(ProcessInfo.processInfo.processIdentifier) appState=\(UIApplication.shared.applicationState.rawValue) \(message)")
+        UserDefaults.standard.set(Array(events.suffix(150)), forKey: "shortcutDiagnostics")
+    }
+
     static func report(snapshot: AudioSnapshot, finalizedThrough: Double, recording: Bool, modelReady: Bool) async throws -> URL {
         let info = Bundle.main.infoDictionary ?? [:]
         let header = """
@@ -20,6 +26,9 @@ enum Diagnostics {
         Recording: \(recording), model ready: \(modelReady)
         Saved seconds: \(snapshot.duration), finalized through: \(finalizedThrough)
         No audio or transcript is included.
+
+        Shortcut events (appState: 0 active, 1 inactive, 2 background):
+        \((UserDefaults.standard.stringArray(forKey: "shortcutDiagnostics") ?? []).joined(separator: "\n"))
 
         Recent events:
         \((UserDefaults.standard.stringArray(forKey: key) ?? []).joined(separator: "\n"))
