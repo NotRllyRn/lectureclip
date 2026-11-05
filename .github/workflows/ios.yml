@@ -81,5 +81,11 @@ jobs:
 
           Supports iPhone and iPad on iOS/iPadOS 26 or later. This unsigned, microphone-only build includes local Parakeet transcription, exports, and on-device summaries on supported devices. Cross-app system audio requires the separately provisioned App Groups build.
           NOTES
+          # A verified Actions artifact may already have been published for this tag.
+          # Never overwrite its assets or fail a duplicate publication attempt.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; retaining its published assets."
+            exit 0
+          fi
           gh release create "$GITHUB_REF_NAME" artifacts/LectureClip-Microphone-unsigned.ipa artifacts/SHA256SUMS \
             --verify-tag --title "LectureClip $GITHUB_REF_NAME" --notes-file release-notes.md
