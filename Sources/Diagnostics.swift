@@ -17,6 +17,12 @@ enum Diagnostics {
         UserDefaults.standard.set(Array(events.suffix(150)), forKey: "shortcutDiagnostics")
     }
 
+    static func transcription(_ message: String) {
+        var events = UserDefaults.standard.stringArray(forKey: "transcriptionDiagnostics") ?? []
+        events.append("\(Date().ISO8601Format()) \(message)")
+        UserDefaults.standard.set(Array(events.suffix(100)), forKey: "transcriptionDiagnostics")
+    }
+
     static func report(snapshot: AudioSnapshot, finalizedThrough: Double, recording: Bool, modelReady: Bool) async throws -> URL {
         let info = Bundle.main.infoDictionary ?? [:]
         let header = """
@@ -29,6 +35,9 @@ enum Diagnostics {
 
         Shortcut events (appState: 0 active, 1 inactive, 2 background):
         \((UserDefaults.standard.stringArray(forKey: "shortcutDiagnostics") ?? []).joined(separator: "\n"))
+
+        Transcription windows (no transcript text):
+        \((UserDefaults.standard.stringArray(forKey: "transcriptionDiagnostics") ?? []).joined(separator: "\n"))
 
         Recent events:
         \((UserDefaults.standard.stringArray(forKey: key) ?? []).joined(separator: "\n"))

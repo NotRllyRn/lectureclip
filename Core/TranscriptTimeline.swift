@@ -9,17 +9,21 @@ struct TranscriptTimeline: Codable, Sendable {
     // revisable tail, and move the boundary back if it would split a word.
     mutating func merge(_ incoming: [TranscriptWord], windowEnd: Double, isLast: Bool) {
         let oldBoundary = finalizedThrough
-        let valid = incoming.filter { $0.start.isFinite && $0.end.isFinite && $0.end > $0.start }
-            .sorted { $0.start < $1.start }
+        guard windowEnd.isFinite, windowEnd >= oldBoundary else { return }
+        let lastEnd = words.last(where: \.isFinal)?.end ?? oldBoundary
+        // Context words and out-of-window timestamps cannot hold back new audio.
+        let valid = incoming.filter {
+            $0.start.isFinite && $0.end.isFinite && $0.end > $0.start &&
+            $0.start >= oldBoundary && $0.start >= lastEnd && $0.end <= windowEnd
+        }.sorted { $0.start < $1.start }
         var boundary = max(oldBoundary, isLast ? windowEnd : windowEnd - 2)
         if let crossing = valid.first(where: { $0.start < boundary && $0.end > boundary }) {
-            boundary = max(oldBoundary, crossing.start)
+            // A long word starting at the cursor must commit through its end;
+            // retreating to its start would repeat this same window forever.
+            boundary = crossing.start > oldBoundary ? crossing.start : crossing.end
         }
         words.removeAll { !$0.isFinal }
-        let lastEnd = words.last?.end ?? oldBoundary
-        words += valid.filter { $0.start >= oldBoundary && $0.start >= lastEnd && $0.end <= windowEnd }
-            .map { TranscriptWord(text: $0.text, start: $0.start, end: $0.end, isFinal: $0.end <= boundary) }
-            .sorted { $0.start < $1.start }
+        words += valid.map { TranscriptWord(text: $0.text, start: $0.start, end: $0.end, isFinal: $0.end <= boundary) }
         finalizedThrough = boundary
     }
 

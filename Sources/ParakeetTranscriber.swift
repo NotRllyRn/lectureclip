@@ -22,3 +22,7 @@ actor ParakeetTranscriber {
         }
     }
 }
+
+struct TranscriptionProgressError: LocalizedError {
+    var errorDescription: String? { "Recognition did not advance through the saved audio. Audio is preserved." }
+}

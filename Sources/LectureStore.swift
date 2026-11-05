@@ -377,19 +377,25 @@ final class LectureStore: ObservableObject {
                 let start = max(0, boundary - 2)
                 let end = min(available.duration, boundary + 6)
                 let isLast = !self.isRecording && end == available.duration
-                self.transcriptionStatus = "Transcribing • \(String(format: "%.1f", remaining))s behind"
+                self.transcriptionStatus = "\(remaining > 10 ? "Catching up" : "Transcribing") • \(String(format: "%.1f", remaining))s behind"
                 do {
+                    let began = Date()
                     let words = try await self.transcriber.transcribe(snapshot: available, start: start, end: end)
                     try Task.checkCancellation()
                     guard var updated = self.session, updated.id == id else { return }
                     updated.timeline.merge(words, windowEnd: end, isLast: isLast)
+                    Diagnostics.transcription("Window \(start)...\(end), words=\(words.count), finalized \(boundary) → \(updated.timeline.finalizedThrough), inferenceSeconds=\(Date().timeIntervalSince(began))")
+                    guard updated.timeline.finalizedThrough > boundary else { throw TranscriptionProgressError() }
                     try SessionStore.save(updated)
                     self.session = updated
                     self.startAutomaticNotes()
-                    if self.isRecording { try await Task.sleep(for: .seconds(2)) }
+                    if self.isRecording, self.snapshot.duration - self.finalizedThrough < 10 {
+                        try await Task.sleep(for: .seconds(2))
+                    }
                 } catch is CancellationError { return }
                 catch {
                     self.transcriptionStatus = "Transcription paused: \(error.localizedDescription). Tap Retry transcription or share diagnostics."
+                    Diagnostics.transcription("Paused at \(boundary), window \(start)...\(end): \(error)")
                     return
                 }
             }
