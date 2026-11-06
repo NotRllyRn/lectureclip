@@ -17,7 +17,7 @@ targets:
     type: tool
     platform: macOS
     sources:
-      - main.swift
+      - QwenSmoke.swift
       - ../../Core/NotesProvider.swift
       - ../../Sources/QwenModelFiles.swift
       - ../../Sources/QwenEngine.swift
