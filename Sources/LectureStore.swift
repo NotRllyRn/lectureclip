@@ -52,14 +52,14 @@ final class LectureStore: ObservableObject {
     }
     var canResume: Bool { isRecordingPaused && !broadcastPrepared && session?.source != .systemAudio }
 
-    init(intelligence: any LectureIntelligence = OnDeviceIntelligence(), restore: Bool = true,
+    init(intelligence: (any LectureIntelligence)? = nil, restore: Bool = true,
          copyClip: @escaping @MainActor (ExportedClip) -> Bool = ClipClipboard.copy,
          recorder: any LectureRecording = SegmentedAudioRecorder(),
          recordingActivity: any RecordingActivityControlling = RecordingActivity()) {
         self.recordingActivity = recordingActivity
         self.recorder = recorder
         self.copyClip = copyClip
-        self.intelligence = intelligence
+        self.intelligence = intelligence ?? NotesModelController.shared
         recorder.onInterruption = { [weak self] message in
             Task { @MainActor in
                 guard let self, self.isRecording else { return }
@@ -130,6 +130,7 @@ final class LectureStore: ObservableObject {
         if source == .systemAudio { await prepareBroadcast(); return false }
         isBusy = true
         defer { isBusy = false; startAutomaticNotes() }
+        await intelligence.cancelGeneration()
         await cancelRecognition()
         monitor?.cancel()
         var created: LectureSession?
@@ -155,6 +156,7 @@ final class LectureStore: ObservableObject {
               let current = session, current.source != .systemAudio else { return false }
         isBusy = true
         defer { isBusy = false; startAutomaticNotes() }
+        await intelligence.cancelGeneration()
         await cancelRecognition()
         monitor?.cancel()
         do {
@@ -299,6 +301,7 @@ final class LectureStore: ObservableObject {
     private func prepareBroadcast() async {
         isBusy = true
         defer { isBusy = false; startAutomaticNotes() }
+        await intelligence.cancelGeneration()
         await cancelRecognition()
         monitor?.cancel()
         do {
@@ -487,14 +490,31 @@ final class LectureStore: ObservableObject {
 
     func selectClip(_ clip: ExportedClip) { lastClip = clip }
 
+    func notesModelChanged() {
+        earlyNotesAttempted.removeAll()
+        finalNotesAttempted.removeAll()
+        resetNotesStatus()
+        startAutomaticNotes()
+    }
+
+    private var notesRestriction: String? {
+        if !intelligence.isAvailable { return intelligence.unavailabilityReason }
+        if !intelligence.allowsLiveGeneration {
+            if isBusy { return "Wait for the recording operation to finish before generating Qwen notes." }
+            if isRecordingActive || broadcastPrepared { return "Qwen notes wait until you pause recording." }
+            if snapshot.duration - finalizedThrough > 0.025 { return "Qwen notes wait for transcription to catch up. Keep the app open." }
+        }
+        return nil
+    }
+
     func startAutomaticNotes() {
         guard UIApplication.shared.applicationState == .active, !summarizing, !automaticNotesPending, !isBusy,
               let session, words.contains(where: \.isFinal) else { return }
         guard let stage = session.automaticNotesStage(isRecording: isRecording || broadcastPrepared, recordedThrough: snapshot.duration) else { return }
         let needsFinal = stage == .complete
         guard needsFinal ? !finalNotesAttempted.contains(session.id) : !earlyNotesAttempted.contains(session.id) else { return }
-        guard intelligence.isAvailable else {
-            notesStatus = "Automatic titles and summaries need Apple Intelligence enabled and downloaded. You can name this lecture manually."
+        if let restriction = notesRestriction {
+            notesStatus = restriction
             return
         }
         if needsFinal { finalNotesAttempted.insert(session.id) }
@@ -510,8 +530,8 @@ final class LectureStore: ObservableObject {
 
     func summarize() async {
         guard !automaticNotesPending else { return }
-        guard intelligence.isAvailable else {
-            errorMessage = "Enable Apple Intelligence and download its model to generate titles and summaries on device."
+        if let restriction = notesRestriction {
+            errorMessage = restriction
             return
         }
         await generateNotes()
@@ -519,8 +539,8 @@ final class LectureStore: ObservableObject {
 
     private func generateNotes() async {
         guard !summarizing, !isBusy, let current = session else { return }
-        guard intelligence.isAvailable else {
-            notesStatus = "Enable Apple Intelligence and download its model to generate titles and summaries on device."
+        if let restriction = notesRestriction {
+            notesStatus = restriction
             return
         }
         let text = current.timeline.words.filter(\.isFinal).map(\.text).joined(separator: " ")
@@ -535,6 +555,7 @@ final class LectureStore: ObservableObject {
         }
         do {
             let title = current.title == nil ? try await intelligence.title(for: text) : nil
+            if !intelligence.allowsLiveGeneration, isBusy || notesRestriction != nil { throw CancellationError() }
             let summary = try await intelligence.summary(for: text)
             guard var updated = session, updated.id == current.id else { return }
             updated.applyNotes(title: title, summary: summary, through: through)
@@ -543,7 +564,7 @@ final class LectureStore: ObservableObject {
         } catch {
             earlyNotesAttempted.insert(current.id)
             if !isRecording { finalNotesAttempted.insert(current.id) }
-            notesStatus = "Could not generate notes: \(error.localizedDescription). Tap Generate / Refresh notes to retry."
+            notesStatus = error is CancellationError ? "Notes generation paused. Keep the app open and tap Generate / Refresh notes to retry." : "Could not generate notes: \(error.localizedDescription). Tap Generate / Refresh notes to retry."
             Diagnostics.record(notesStatus)
         }
     }
@@ -551,8 +572,8 @@ final class LectureStore: ObservableObject {
     func regenerateRecordingTitle() async {
         guard !summarizing, !automaticNotesPending, let current = session else { return }
         let text = current.timeline.words.filter(\.isFinal).map(\.text).joined(separator: " ")
-        guard !text.isEmpty, intelligence.isAvailable else {
-            errorMessage = "Title generation needs a finalized transcript and Apple Intelligence."
+        guard !text.isEmpty, notesRestriction == nil else {
+            errorMessage = notesRestriction ?? "Title generation needs a finalized transcript."
             return
         }
         summarizing = true
@@ -569,8 +590,8 @@ final class LectureStore: ObservableObject {
 
     func regenerateClipTitle() async {
         guard !summarizing, !automaticNotesPending, !exporting, let current = session, let clip = lastClip else { return }
-        guard !clip.text.isEmpty, intelligence.isAvailable else {
-            errorMessage = "Clip titles need the clip's transcript and Apple Intelligence."
+        guard !clip.text.isEmpty, notesRestriction == nil else {
+            errorMessage = notesRestriction ?? "Clip titles need the clip's transcript."
             return
         }
         summarizing = true

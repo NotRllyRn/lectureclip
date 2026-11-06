@@ -4,6 +4,7 @@ import UIKit
 struct ContentView: View {
     @ObservedObject var store: LectureStore
     @State private var showingSummary = false
+    @State private var showingNotesModel = false
     @Environment(\.scenePhase) private var scenePhase
     @State private var showingAdvanced = false
     @State private var showingLectures = false
@@ -36,6 +37,9 @@ struct ContentView: View {
             .frame(maxWidth: .infinity)
             .navigationTitle("LectureClip")
             .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showingNotesModel = true } label: { Label("Notes model", systemImage: "gearshape") }
+                }
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
                         Button(store.preparingDiagnostics ? "Preparing…" : "Prepare diagnostics") {
@@ -51,6 +55,7 @@ struct ContentView: View {
                     .disabled(store.isRecording || store.broadcastPrepared || store.isBusy || store.exporting || store.summarizing)
                 }
             }
+            .sheet(isPresented: $showingNotesModel) { NotesModelSettings(model: .shared, store: store) }
             .sheet(isPresented: $showingLectures) {
                 SavedLecturesView(sessions: store.sessions) { saved in Task { await store.open(saved) } }
             }
@@ -174,6 +179,7 @@ struct ContentView: View {
             HStack {
                 Menu {
                     Text(store.notesStatus)
+                    Button("Notes model settings") { showingNotesModel = true }
                     Button("Generate / Refresh notes") { Task { await store.summarize() } }
                         .disabled(store.summarizing || store.isBusy || !store.words.contains(where: \.isFinal))
                     Button("Regenerate clip title") { Task { await store.regenerateClipTitle() } }

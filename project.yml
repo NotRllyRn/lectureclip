@@ -5,10 +5,16 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "1.0.11"
-    CURRENT_PROJECT_VERSION: "12"
+    MARKETING_VERSION: "1.0.12"
+    CURRENT_PROJECT_VERSION: "13"
     TARGETED_DEVICE_FAMILY: "1,2"
 packages:
+  MLXLM:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    revision: 25b00d4e22e61ec9c41efda47990cd2084ec87ff
+  MLX:
+    url: https://github.com/ml-explore/mlx-swift
+    exactVersion: 0.31.3
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
     revision: ee78635d23d52379117554ba72358b65a0612447
@@ -25,6 +31,12 @@ targets:
       - target: LectureClipRecordingWidget
         embed: true
       - package: FluidAudio
+      - package: MLXLM
+        product: MLXLLM
+      - package: MLXLM
+        product: MLXLMCommon
+      - package: MLX
+        product: MLX
       - target: LectureClipBroadcast
         embed: true
     info:

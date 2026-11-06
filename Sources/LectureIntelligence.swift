@@ -4,8 +4,17 @@ import FoundationModels
 @MainActor
 protocol LectureIntelligence {
     var isAvailable: Bool { get }
+    var allowsLiveGeneration: Bool { get }
+    var unavailabilityReason: String { get }
+    func cancelGeneration() async
     func title(for text: String) async throws -> String
     func summary(for text: String) async throws -> String
+}
+
+extension LectureIntelligence {
+    var allowsLiveGeneration: Bool { true }
+    var unavailabilityReason: String { "Enable Apple Intelligence and download its model to generate titles and summaries on device." }
+    func cancelGeneration() async {}
 }
 
 struct OnDeviceIntelligence: LectureIntelligence {
