@@ -52,12 +52,12 @@ struct ContentView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingLectures = true } label: { Label("Saved lectures", systemImage: "folder") }
-                    .disabled(store.isRecording || store.broadcastPrepared || store.isBusy || store.exporting || store.summarizing)
+                    .disabled(store.isBusy || store.exporting || store.summarizing)
                 }
             }
             .sheet(isPresented: $showingNotesModel) { NotesModelSettings(model: .shared, store: store) }
             .sheet(isPresented: $showingLectures) {
-                SavedLecturesView(sessions: store.sessions) { saved in Task { await store.open(saved) } }
+                SavedLecturesView(store: store)
             }
             .sheet(isPresented: $showingAdvanced) {
                 AdvancedExportView(words: store.words.filter(\.isFinal), duration: store.snapshot.duration) { start, end in

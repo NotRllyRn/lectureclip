@@ -24,6 +24,9 @@ final class LectureStore: ObservableObject {
     @Published private(set) var diagnosticsURL: URL?
     @Published private(set) var preparingDiagnostics = false
     @Published private(set) var notesStatus = "Choose a notes model using the gear button."
+    @Published private(set) var storage: LectureStorageReport?
+    @Published private(set) var storageError: String?
+    private var refreshingStorage = false
     private let copyClip: @MainActor (ExportedClip) -> Bool
     private let intelligence: any LectureIntelligence
     private var automaticNotesPending = false
@@ -274,6 +277,68 @@ final class LectureStore: ObservableObject {
     func resumeRecordingFromShortcut() async -> Bool {
         guard UIApplication.shared.isProtectedDataAvailable, AVAudioApplication.shared.recordPermission == .granted else { return false }
         return await resumeRecording(reportErrors: false, requiresActivity: true)
+    }
+
+    var canDeleteRecordings: Bool {
+        !isRecordingActive && !isRecording && !broadcastPrepared && !isBusy && !exporting && !summarizing && !automaticNotesPending
+    }
+
+    func refreshStorage() async {
+        guard !refreshingStorage else { return }
+        refreshingStorage = true
+        defer { refreshingStorage = false }
+        let saved = sessions
+        do {
+            let report = try await Task.detached(priority: .utility) { try LectureStorage.report(sessions: saved) }.value
+            guard Set(saved.map(\.id)) == Set(sessions.map(\.id)) else { return }
+            storage = report
+            storageError = nil
+        } catch { storageError = "Storage unavailable: \(error.localizedDescription)" }
+    }
+
+    @discardableResult
+    func deleteRecording(_ saved: LectureSession) async -> Bool {
+        guard canDeleteRecordings else {
+            errorMessage = "Pause recording and wait for exports or notes to finish before deleting a lecture."
+            return false
+        }
+        isBusy = true
+        defer { isBusy = false; startAutomaticNotes() }
+        let deletingCurrent = session?.id == saved.id
+        if deletingCurrent { await cancelRecognition(); monitor?.cancel(); monitor = nil }
+        do {
+            let latest = try SessionStore.list()
+            if let fresh = latest.first(where: { $0.id == saved.id }) {
+                try LectureStorage.delete(fresh, keeping: latest.filter { $0.id != saved.id })
+            }
+            if deletingCurrent {
+                session = nil
+                snapshot = AudioSnapshot(chunks: [], duration: 0)
+                lastClip = nil
+                diagnosticsURL = nil
+                isRecording = false
+                broadcastPrepared = false
+                source = .microphone
+                status = "Lecture deleted. Start a new recording or open a saved lecture."
+                transcriptionStatus = modelReady ? "Parakeet V3 ready — transcription stays on this device." : "Download the speech model to enable local transcription."
+                resetNotesStatus()
+            }
+            if UserDefaults.standard.string(forKey: "selectedSessionID") == saved.id.uuidString {
+                UserDefaults.standard.removeObject(forKey: "selectedSessionID")
+            }
+            earlyNotesAttempted.remove(saved.id)
+            finalNotesAttempted.remove(saved.id)
+            sessions = try SessionStore.list()
+            storage = nil
+            await refreshStorage()
+            return true
+        } catch {
+            errorMessage = "Could not completely delete the lecture: \(error.localizedDescription). Refresh and try again."
+            sessions = (try? SessionStore.list()) ?? sessions
+            await refreshStorage()
+            if deletingCurrent { startRecognition() }
+            return false
+        }
     }
 
     func open(_ saved: LectureSession) async {
