@@ -41,6 +41,35 @@ final class RecordingLifecycleTests: XCTestCase {
         _ = await store.stopRecording(reportErrors: false)
     }
 
+    func testDeleteCurrentRecordingRequiresPauseAndClearsRestorableState() async throws {
+        let enabled = UserDefaults.standard.bool(forKey: "transcriptionEnabled")
+        let selection = UserDefaults.standard.string(forKey: "selectedSessionID")
+        UserDefaults.standard.set(false, forKey: "transcriptionEnabled")
+        defer {
+            UserDefaults.standard.set(enabled, forKey: "transcriptionEnabled")
+            UserDefaults.standard.set(selection, forKey: "selectedSessionID")
+        }
+        let store = LectureStore(intelligence: NoRecordingNotes(), restore: false, recorder: TestRecordingCapture())
+        let started = await store.startRecording(reportErrors: false)
+        XCTAssertTrue(started)
+        let saved = try XCTUnwrap(store.session)
+        defer { try? FileManager.default.removeItem(at: SessionStore.directory(saved.id)) }
+        let activeDeletion = await store.deleteRecording(saved)
+        XCTAssertFalse(activeDeletion)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: SessionStore.directory(saved.id).path))
+        _ = await store.stopRecording(reportErrors: false)
+        let deleted = await store.deleteRecording(saved)
+        XCTAssertTrue(deleted)
+        XCTAssertNil(store.session)
+        XCTAssertNil(store.lastClip)
+        XCTAssertTrue(store.words.isEmpty)
+        XCTAssertEqual(store.snapshot.duration, 0)
+        XCTAssertFalse(store.canResume)
+        XCTAssertFalse(store.canQuickExport)
+        XCTAssertNil(UserDefaults.standard.string(forKey: "selectedSessionID"))
+        XCTAssertFalse(try SessionStore.list().contains { $0.id == saved.id })
+    }
+
     func testRecordingLiveActivityCanStartAndEnd() async throws {
         try XCTSkipUnless(ActivityAuthorizationInfo().areActivitiesEnabled, "Live Activities are disabled on this test host.")
         let activity = RecordingActivity()

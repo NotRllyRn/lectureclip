@@ -50,6 +50,16 @@ final class LectureClipUITests: XCTestCase {
     }
 
     @MainActor
+    func testSavedLecturesShowsStorage() {
+        let app = XCUIApplication()
+        app.launch()
+        app.buttons["Saved lectures"].tap()
+        XCTAssertTrue(app.staticTexts["Total lecture storage"].waitForExistence(timeout: 10))
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.buttons["recordButton"].exists)
+    }
+
+    @MainActor
     func testLaunchControls() {
         let app = XCUIApplication()
         app.launch()
