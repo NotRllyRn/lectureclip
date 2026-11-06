@@ -5,6 +5,42 @@ import XCTest
 
 @MainActor
 final class RecordingLifecycleTests: XCTestCase {
+    func testLocalNotesWaitForPauseAndTranscriptionCatchup() async throws {
+        let enabled = UserDefaults.standard.bool(forKey: "transcriptionEnabled")
+        let selection = UserDefaults.standard.string(forKey: "selectedSessionID")
+        UserDefaults.standard.set(false, forKey: "transcriptionEnabled")
+        let notes = PausedRecordingNotes()
+        let store = LectureStore(intelligence: notes, restore: false, recorder: TestRecordingCapture())
+        defer {
+            if let id = store.session?.id { try? FileManager.default.removeItem(at: SessionStore.directory(id)) }
+            UserDefaults.standard.set(enabled, forKey: "transcriptionEnabled")
+            UserDefaults.standard.set(selection, forKey: "selectedSessionID")
+        }
+        let started = await store.startRecording(reportErrors: false)
+        XCTAssertTrue(started)
+        XCTAssertEqual(notes.cancellations, 1)
+        await store.summarize()
+        XCTAssertTrue(store.errorMessage?.contains("pause") == true)
+        _ = await store.stopRecording(reportErrors: false)
+        await store.summarize()
+        XCTAssertTrue(store.errorMessage?.contains("catch up") == true)
+        XCTAssertEqual(notes.calls, 0)
+        var saved = try XCTUnwrap(store.session)
+        saved.timeline.words = [TranscriptWord(text: "Biology", start: 0, end: 1)]
+        saved.timeline.finalizedThrough = 1
+        saved.summaryThrough = 1 // Prevent auto-generation so the manual path is deterministic.
+        saved.summary = "Existing notes"
+        try SessionStore.save(saved)
+        await store.open(saved)
+        await store.summarize()
+        XCTAssertEqual(notes.calls, 2)
+        XCTAssertEqual(store.session?.summary, "Local summary")
+        let resumed = await store.resumeRecording(reportErrors: false)
+        XCTAssertTrue(resumed)
+        XCTAssertEqual(notes.cancellations, 2)
+        _ = await store.stopRecording(reportErrors: false)
+    }
+
     func testRecordingLiveActivityCanStartAndEnd() async throws {
         try XCTSkipUnless(ActivityAuthorizationInfo().areActivitiesEnabled, "Live Activities are disabled on this test host.")
         let activity = RecordingActivity()
@@ -271,4 +307,15 @@ private final class TestRecordingActivity: RecordingActivityControlling {
         active = true
     }
     func end() async { active = false }
+}
+
+@MainActor
+private final class PausedRecordingNotes: LectureIntelligence {
+    var isAvailable: Bool { true }
+    var allowsLiveGeneration: Bool { false }
+    var calls = 0
+    var cancellations = 0
+    func cancelGeneration() async { cancellations += 1 }
+    func title(for text: String) async throws -> String { calls += 1; return "Local title" }
+    func summary(for text: String) async throws -> String { calls += 1; return "Local summary" }
 }

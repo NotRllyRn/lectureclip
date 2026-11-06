@@ -1,0 +1,35 @@
+name: QwenSmoke
+options:
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+packages:
+  MLXLM:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    revision: 25b00d4e22e61ec9c41efda47990cd2084ec87ff
+  MLX:
+    url: https://github.com/ml-explore/mlx-swift
+    exactVersion: 0.31.3
+targets:
+  QwenSmoke:
+    type: tool
+    platform: macOS
+    sources:
+      - main.swift
+      - ../../Core/NotesProvider.swift
+      - ../../Sources/QwenModelFiles.swift
+      - ../../Sources/QwenEngine.swift
+    dependencies:
+      - package: MLXLM
+        product: MLXLLM
+      - package: MLXLM
+        product: MLXLMCommon
+      - package: MLX
+        product: MLX
+schemes:
+  QwenSmoke:
+    build:
+      targets:
+        QwenSmoke: all

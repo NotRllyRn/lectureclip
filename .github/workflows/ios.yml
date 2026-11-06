@@ -8,13 +8,15 @@ concurrency:
 jobs:
   build:
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 60
     outputs:
       artifact: ${{ steps.sideload.outputs.artifact }}
     steps:
       - uses: actions/checkout@v5
       - name: Install XcodeGen
         run: brew install xcodegen
+      - name: Install Metal compiler
+        run: xcodebuild -downloadComponent MetalToolchain
       - name: Test core and build both SDKs
         run: scripts/check-macos.sh
       - name: Smoke test iPhone and iPad

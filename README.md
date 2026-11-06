@@ -28,7 +28,7 @@ The broadcast extension stores audio locally in the shared container; it never s
 - Both workflows save M4A/TXT files in Documents/Exports. Clipboard support depends on the receiving app; **Share clip** and **Copy text** are fallbacks. Goodnotes may not accept an audio clipboard item.
 - The folder menu opens previous recordings. Relaunch recovers indexed, sealed CAF chunks and transcription/export progress. An unsealed tail can be lost on forced termination. Starting a new recording preserves prior sessions.
 - Files are accessible through Files/Finder sharing. No automatic retention policy deletes lectures. Do not edit or remove active session files while recording.
-- **Notes & titles** uses Apple Foundation Models when Apple Intelligence is available. Opening notes are generated automatically after about two minutes of finalized transcription, and the summary refreshes after stop/catch-up. Manual generation is also available.
+- **Notes & titles** offers downloadable Qwen3-1.7B 4-bit local generation or Apple Intelligence. Qwen generates after recording pauses and transcription catches up; Apple can also generate opening notes while recording. Manual generation is available.
 
 ## Architecture
 
@@ -74,7 +74,7 @@ Use the pencil beside the current recording's name to **Name / Rename recording*
 
 With Apple Intelligence enabled and its model available, LectureClip automatically creates an opening title and summary after approximately two minutes of finalized transcription. It refreshes the summary once recording stops and transcription finishes; shorter recordings get their first notes then. Automatic generation starts while the app is active, and resumes checking when you return. It does not wait for notes to finish before allowing you to stop recording. Summaries show which transcript timestamp they cover.
 
-Open **Notes & titles → Generate / Refresh notes** to generate notes sooner, refresh them, or retry a failure. Without Apple Intelligence, recording, transcription, exports, and manual naming continue to work. Generated titles and summaries should be checked for accuracy.
+Open **Notes & titles → Generate / Refresh notes** to generate notes sooner, refresh them, or retry a failure. Without a notes model, recording, transcription, exports, and manual naming continue to work. Generated titles and summaries should be checked for accuracy.
 
 New exports appear under **Saved clips** for their lecture, including after relaunch. Select a clip, then use **Notes & titles → Regenerate clip title** to generate a name from that clip's transcript and rename its M4A/TXT files. Clips exported before this feature remain available in Files → LectureClip → Exports.
 
@@ -116,3 +116,16 @@ Start, Stop, and Resume adopt Apple's [AudioRecordingIntent](https://developer.a
 The state checks are read-only App Intents and do not request microphone access or start recording. After an app termination, a selected microphone lecture is recovered as paused, never falsely reported as actively capturing audio. The full App Groups build also reflects a live ReplayKit broadcast's active/paused phase in state checks, but controlling that broadcast still requires Apple's broadcast controls; these new Start/Stop/Resume actions control microphone recordings.
 
 If transcription was previously enabled, starting/continuing also attempts to load the saved speech model and transcribe while recording. Recording succeeds independently of model loading. Automatic summaries can refresh again after each subsequent pause and catch-up. An automation can use **Is Recording Paused → If true: Resume Recording; Otherwise, if not active: Start New Recording**. The five recording/state actions and legacy foreground copy action return Boolean values; Quick Export Files returns files.
+
+
+### Qwen local titles and summaries
+
+Open the gear button → **Notes model**, select **Qwen3 1.7B · 4-bit**, then **Download Qwen**. This explicit, approximately 985 MB download is separate from Parakeet. Keep the app open during download; completed verified files are reused on retry. You can remove Qwen without deleting recordings or notes. Apple Intelligence remains selectable.
+
+Qwen runs offline through MLX and does not use Apple Foundation Models or its generation quota. Pause recording, wait for transcription to catch up, and keep LectureClip open. Automatic notes run after catch-up; **Generate / Refresh notes** retries or updates them. Recording and clip title regeneration use the selected model. Starting/resuming recording or leaving the app cancels Qwen generation; saved notes are preserved. Qwen does not generate live opening notes while recording.
+
+The runtime processes at most 2,048 transcript tokens per section, with bounded output and thinking disabled. Long lectures produce consecutive section summaries. Weights are released after each operation; physical-device memory, speed and thermal limits still apply. No model download or Qwen load is triggered by cold-launch recording/export shortcuts. Check generated facts against the transcript.
+
+Model: [mlx-community/Qwen3-1.7B-4bit](https://huggingface.co/mlx-community/Qwen3-1.7B-4bit), Apache 2.0, pinned revision `3b1b1768f8f8cf8351c712464f906e86c2b8269e`. Each downloaded asset is checked against its expected length and SHA-256 before marking the model ready. MLX Swift 0.31.3 and MLX Swift LM 2.31.3 are MIT licensed; see their upstream repositories for license text. Building requires Xcode's Metal compiler component (`xcodebuild -downloadComponent MetalToolchain`).
+
+`Tools/QwenSmoke` is a native macOS command-line inference check using the exact app engine and model downloader. Generate its project with XcodeGen, build its Release scheme, then run `QwenSmoke` beside its built resource bundles. Simulator tests check the app and download-state handling; model inference requires Apple GPU hardware and is disabled in the iOS simulator.
