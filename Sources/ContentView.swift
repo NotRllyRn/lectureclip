@@ -52,7 +52,6 @@ struct ContentView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingLectures = true } label: { Label("Saved lectures", systemImage: "folder") }
-                    .disabled(store.isBusy || store.exporting || store.summarizing)
                 }
             }
             .sheet(isPresented: $showingNotesModel) { NotesModelSettings(model: .shared, store: store) }
@@ -72,7 +71,7 @@ struct ContentView: View {
                 Button("Cancel", role: .cancel) { }
             }
             .task { await store.activate() }
-            .alert("LectureClip", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
+            .alert("LectureClip", isPresented: Binding(get: { store.errorMessage != nil && !showingLectures }, set: { if !$0 && !showingLectures { store.errorMessage = nil } })) {
                 Button("OK", role: .cancel) { store.errorMessage = nil }
             } message: { Text(store.errorMessage ?? "") }
             .onChange(of: scenePhase) { _, phase in
@@ -139,12 +138,19 @@ struct ContentView: View {
                 }
             }
             Text(store.transcriptionStatus).font(.caption).foregroundStyle(.secondary)
-            if !store.modelReady {
+            if store.transcriptionFinished {
+                Label("Finished transcribing", systemImage: "checkmark.circle.fill").font(.caption)
+            } else if !store.modelReady {
                 Button(store.preparingModel ? "Preparing model…" : "Download / Retry Parakeet V3") {
                     Task { await store.prepareModel() }
                 }.disabled(store.preparingModel)
+            } else if store.isTranscribing {
+                Text("Transcription running").font(.caption).foregroundStyle(.secondary)
+            } else if store.snapshot.duration > store.finalizedThrough {
+                Button(store.hasTranscriptionFailure ? "Retry transcription" : "Start transcription") { store.startRecognition() }
+                    .font(.caption).disabled(store.isBusy)
             } else {
-                Button("Retry transcription") { store.startRecognition() }.font(.caption)
+                Text("Ready to transcribe new audio").font(.caption).foregroundStyle(.secondary)
             }
         }
     }

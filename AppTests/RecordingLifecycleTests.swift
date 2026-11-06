@@ -58,8 +58,14 @@ final class RecordingLifecycleTests: XCTestCase {
         XCTAssertFalse(activeDeletion)
         XCTAssertTrue(FileManager.default.fileExists(atPath: SessionStore.directory(saved.id).path))
         _ = await store.stopRecording(reportErrors: false)
+        async let scan: Void = store.refreshStorage()
         let deleted = await store.deleteRecording(saved)
+        await scan
+        await store.refreshStorage()
         XCTAssertTrue(deleted)
+        XCTAssertFalse(store.isBusy)
+        XCTAssertNil(store.storageError)
+        XCTAssertFalse(store.transcriptionFinished)
         XCTAssertNil(store.session)
         XCTAssertNil(store.lastClip)
         XCTAssertTrue(store.words.isEmpty)
@@ -68,6 +74,33 @@ final class RecordingLifecycleTests: XCTestCase {
         XCTAssertFalse(store.canQuickExport)
         XCTAssertNil(UserDefaults.standard.string(forKey: "selectedSessionID"))
         XCTAssertFalse(try SessionStore.list().contains { $0.id == saved.id })
+    }
+
+    func testFinishedTranscriptionUsesSavedProgressWithoutLoadingModel() async throws {
+        let enabled = UserDefaults.standard.bool(forKey: "transcriptionEnabled")
+        let selection = UserDefaults.standard.string(forKey: "selectedSessionID")
+        UserDefaults.standard.set(false, forKey: "transcriptionEnabled")
+        defer {
+            UserDefaults.standard.set(enabled, forKey: "transcriptionEnabled")
+            UserDefaults.standard.set(selection, forKey: "selectedSessionID")
+        }
+        let store = LectureStore(intelligence: NoRecordingNotes(), restore: false, recorder: TestRecordingCapture())
+        XCTAssertFalse(store.transcriptionFinished)
+        _ = await store.startRecording(reportErrors: false)
+        let id = try XCTUnwrap(store.session?.id)
+        defer { try? FileManager.default.removeItem(at: SessionStore.directory(id)) }
+        _ = await store.stopRecording(reportErrors: false)
+        XCTAssertFalse(store.transcriptionFinished)
+        var saved = try XCTUnwrap(store.session)
+        saved.timeline.finalizedThrough = store.snapshot.duration
+        try SessionStore.save(saved)
+        await store.open(saved)
+        XCTAssertTrue(store.transcriptionFinished)
+        XCTAssertFalse(store.hasTranscriptionFailure)
+        _ = await store.resumeRecording(reportErrors: false)
+        XCTAssertFalse(store.transcriptionFinished)
+        _ = await store.stopRecording(reportErrors: false)
+        XCTAssertFalse(store.transcriptionFinished) // New audio still needs recognition.
     }
 
     func testRecordingLiveActivityCanStartAndEnd() async throws {

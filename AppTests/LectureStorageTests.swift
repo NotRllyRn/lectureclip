@@ -3,6 +3,32 @@ import XCTest
 
 @MainActor
 final class LectureStorageTests: XCTestCase {
+    func testMissingFilesAreIdempotentButOtherErrorsAreNotIgnored() throws {
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        XCTAssertNoThrow(try LectureStorage.removeIfPresent(missing))
+        XCTAssertTrue(try LectureStorage.files(in: missing).isEmpty)
+        XCTAssertTrue(LectureStorage.isMissing(CocoaError(.fileReadNoSuchFile)))
+        XCTAssertTrue(LectureStorage.isMissing(CocoaError(.fileNoSuchFile)))
+        XCTAssertTrue(LectureStorage.isMissing(NSError(domain: NSPOSIXErrorDomain, code: 2)))
+        XCTAssertFalse(LectureStorage.isMissing(CocoaError(.fileWriteNoPermission)))
+    }
+
+    func testStorageScanAndDeletionCanOverlapWithoutMissingFileFailure() async throws {
+        let saved = try SessionStore.create()
+        defer { try? FileManager.default.removeItem(at: SessionStore.directory(saved.id)) }
+        for index in 0..<100 {
+            try Data([1, 2, 3]).write(to: SessionStore.directory(saved.id).appendingPathComponent("audio-\(index).caf"))
+        }
+        async let scan = LectureStorageWorker.shared.report(sessions: [saved])
+        async let deletion: Void = LectureStorageWorker.shared.delete(saved, keeping: [])
+        _ = try await (scan, deletion)
+        // Retrying a completed deletion is harmless even with stale metadata.
+        try await LectureStorageWorker.shared.delete(saved, keeping: [])
+        let after = try await LectureStorageWorker.shared.report(sessions: [saved])
+        XCTAssertEqual(after.bytesBySession[saved.id], 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: SessionStore.directory(saved.id).path))
+    }
+
     func testSizesIncludeMetadataUnindexedAudioAndDeduplicatedClips() throws {
         var first = try SessionStore.create()
         let second = try SessionStore.create()

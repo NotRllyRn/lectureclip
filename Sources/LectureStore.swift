@@ -37,6 +37,14 @@ final class LectureStore: ObservableObject {
     private let transcriber = ParakeetTranscriber()
     private var monitor: Task<Void, Never>?
     private var recognition: Task<Void, Never>?
+    private var deletingSessionID: UUID?
+    @Published private(set) var isTranscribing = false
+    @Published private(set) var hasTranscriptionFailure = false
+
+    var transcriptionFinished: Bool {
+        session != nil && snapshot.duration > 0 && !isRecording && !isRecordingActive && !broadcastPrepared
+            && snapshot.duration - finalizedThrough < 0.025
+    }
 
     var words: [TranscriptWord] { session?.timeline.words ?? [] }
     var finalizedThrough: Double { session?.timeline.finalizedThrough ?? 0 }
@@ -289,11 +297,14 @@ final class LectureStore: ObservableObject {
         defer { refreshingStorage = false }
         let saved = sessions
         do {
-            let report = try await Task.detached(priority: .utility) { try LectureStorage.report(sessions: saved) }.value
+            let report = try await LectureStorageWorker.shared.report(sessions: saved)
             guard Set(saved.map(\.id)) == Set(sessions.map(\.id)) else { return }
             storage = report
             storageError = nil
-        } catch { storageError = "Storage unavailable: \(error.localizedDescription)" }
+        } catch {
+            storageError = "Storage unavailable: \(error.localizedDescription)"
+            Diagnostics.record(storageError!)
+        }
     }
 
     @discardableResult
@@ -303,16 +314,19 @@ final class LectureStore: ObservableObject {
             return false
         }
         isBusy = true
-        defer { isBusy = false; startAutomaticNotes() }
+        deletingSessionID = saved.id
+        Diagnostics.record("Deleting lecture \(saved.id); selected=\(session?.id == saved.id).")
+        defer { deletingSessionID = nil; isBusy = false; startAutomaticNotes() }
         let deletingCurrent = session?.id == saved.id
         if deletingCurrent { await cancelRecognition(); monitor?.cancel(); monitor = nil }
         do {
             let latest = try SessionStore.list()
             if let fresh = latest.first(where: { $0.id == saved.id }) {
-                try LectureStorage.delete(fresh, keeping: latest.filter { $0.id != saved.id })
+                try await LectureStorageWorker.shared.delete(fresh, keeping: latest.filter { $0.id != saved.id })
             }
             if deletingCurrent {
                 session = nil
+                hasTranscriptionFailure = false
                 snapshot = AudioSnapshot(chunks: [], duration: 0)
                 lastClip = nil
                 diagnosticsURL = nil
@@ -330,13 +344,16 @@ final class LectureStore: ObservableObject {
             finalNotesAttempted.remove(saved.id)
             sessions = try SessionStore.list()
             storage = nil
+            storageError = nil
+            errorMessage = nil
             await refreshStorage()
+            Diagnostics.record("Deleted lecture \(saved.id); library count=\(sessions.count).")
             return true
         } catch {
             errorMessage = "Could not completely delete the lecture: \(error.localizedDescription). Refresh and try again."
             sessions = (try? SessionStore.list()) ?? sessions
             await refreshStorage()
-            if deletingCurrent { startRecognition() }
+            if deletingCurrent { deletingSessionID = nil; startRecognition() }
             return false
         }
     }
@@ -351,6 +368,7 @@ final class LectureStore: ObservableObject {
             guard let fresh = sessions.first(where: { $0.id == saved.id }) else { return }
             snapshot = try SessionStore.snapshot(fresh.id)
             session = fresh
+            hasTranscriptionFailure = false
             try markSelectedPaused()
             UserDefaults.standard.set(fresh.id.uuidString, forKey: "selectedSessionID")
             resetNotesStatus()
@@ -429,10 +447,12 @@ final class LectureStore: ObservableObject {
     }
 
     func startRecognition() {
-        guard modelReady, recognition == nil, let id = session?.id else { return }
+        guard modelReady, recognition == nil, let id = session?.id, deletingSessionID != id else { return }
+        isTranscribing = true
+        hasTranscriptionFailure = false
         recognition = Task { [weak self] in
             guard let self else { return }
-            defer { self.recognition = nil }
+            defer { self.recognition = nil; self.isTranscribing = false }
             while !Task.isCancelled, self.session?.id == id {
                 let boundary = self.finalizedThrough
                 let available = self.snapshot
@@ -462,6 +482,8 @@ final class LectureStore: ObservableObject {
                     }
                 } catch is CancellationError { return }
                 catch {
+                    guard !Task.isCancelled, self.session?.id == id, self.deletingSessionID != id else { return }
+                    self.hasTranscriptionFailure = true
                     self.transcriptionStatus = "Transcription paused: \(error.localizedDescription). Tap Retry transcription or share diagnostics."
                     Diagnostics.transcription("Paused at \(boundary), window \(start)...\(end): \(error)")
                     return
