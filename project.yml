@@ -57,6 +57,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.notrllyrn.LectureClip
         PRODUCT_NAME: LectureClip
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) $(LECTURECLIP_FEATURE_FLAGS)"
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: Sources/LectureClip.entitlements
   LectureClipBroadcast:

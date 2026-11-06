@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 xcodebuild -quiet -project LectureClip.xcodeproj -scheme LectureClip \
   -configuration Release -destination 'generic/platform=iOS' \
   -derivedDataPath DerivedData-sideload CODE_SIGNING_ALLOWED=NO \
-  SWIFT_ACTIVE_COMPILATION_CONDITIONS=FREE_SIDELOAD build
+  LECTURECLIP_FEATURE_FLAGS=FREE_SIDELOAD build
 
 mkdir -p artifacts
 output="$PWD/artifacts/LectureClip-Microphone-unsigned.ipa"
