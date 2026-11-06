@@ -23,7 +23,7 @@ final class LectureStore: ObservableObject {
     @Published var transcriptionStatus = "Download the speech model to enable local transcription." { didSet { Diagnostics.record(transcriptionStatus) } }
     @Published private(set) var diagnosticsURL: URL?
     @Published private(set) var preparingDiagnostics = false
-    @Published private(set) var notesStatus = "Automatic title and summary after about two minutes of transcription."
+    @Published private(set) var notesStatus = "Choose a notes model using the gear button."
     private let copyClip: @MainActor (ExportedClip) -> Bool
     private let intelligence: any LectureIntelligence
     private var automaticNotesPending = false
@@ -470,7 +470,7 @@ final class LectureStore: ObservableObject {
 
     private func resetNotesStatus() {
         notesStatus = session?.summaryThrough.map { "Saved summary through \(clockString($0))." }
-            ?? "Automatic title and summary after about two minutes of transcription."
+            ?? (intelligence.allowsLiveGeneration ? "Automatic title and summary after about two minutes of transcription." : "Qwen notes generate after recording pauses and transcription catches up.")
     }
 
     private func persist(_ updated: LectureSession) throws {
