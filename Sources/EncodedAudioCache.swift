@@ -10,19 +10,22 @@ enum EncodedAudioCache {
         chunk.url.deletingPathExtension().appendingPathExtension("aac64-v1.m4a")
     }
 
+    // Nonblocking probe; unlike wait(), safe to call from an async context.
+    private static func acquireSlot() -> Bool { slots.wait(timeout: .now()) == .success }
+
     static func schedule(_ chunk: AudioChunk) {
-        guard slots.wait(timeout: .now()) == .success else { return }
+        guard acquireSlot() else { return }
         queue.async {
             defer { slots.signal() }
             // Encoding failure must never stop capture; export can retry or use PCM.
-            try? encode(chunk)
+            _ = try? encode(chunk)
         }
     }
 
     static func prepare(_ chunk: AudioChunk) async throws -> URL {
         try Task.checkCancellation()
         // Capture never waits; exports wait cooperatively for the same bounded queue.
-        while slots.wait(timeout: .now()) != .success { try await Task.sleep(for: .milliseconds(20)) }
+        while !acquireSlot() { try await Task.sleep(for: .milliseconds(20)) }
         let cancellation = Cancellation()
         let result: URL = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
