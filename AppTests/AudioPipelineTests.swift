@@ -84,6 +84,35 @@ final class AudioPipelineTests: XCTestCase {
     }
 
     @MainActor
+    func testAACDownmixPreservesEitherStereoChannel() async throws {
+        let session = try SessionStore.create()
+        let directory = SessionStore.directory(session.id)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for activeChannel in 0..<2 {
+            let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 48_137))
+            buffer.frameLength = buffer.frameCapacity
+            for channel in 0..<2 {
+                let samples = try XCTUnwrap(buffer.floatChannelData?[channel])
+                for frame in 0..<Int(buffer.frameLength) {
+                    samples[frame] = channel == activeChannel ? 0.3 * sin(Float(frame) * 2 * .pi * 440 / 48_000) : 0
+                }
+            }
+            let url = directory.appendingPathComponent("stereo-\(activeChannel).caf")
+            var source: AVAudioFile? = try AVAudioFile(forWriting: url, settings: format.settings)
+            try source?.write(from: buffer)
+            source = nil
+            let chunk = AudioChunk(id: UUID(), url: url, startFrame: 0, frameCount: 48_137, sampleRate: 48_000)
+            let encoded = try await EncodedAudioCache.prepare(chunk)
+            let file = try AVAudioFile(forReading: encoded)
+            let audio = try AudioWindowReader.read(file, first: 0, count: AVAudioFrameCount(file.length))
+            let samples = try XCTUnwrap(audio.floatChannelData?[0])
+            let energy = (0..<Int(audio.frameLength)).reduce(Float(0)) { $0 + abs(samples[$1]) } / Float(audio.frameLength)
+            XCTAssertGreaterThan(energy, 0.03, "Lost stereo channel \(activeChannel)")
+        }
+    }
+
+    @MainActor
     func testAACCacheAndPassthroughAcrossPartialChunks() async throws {
         let session = try SessionStore.create()
         let directory = SessionStore.directory(session.id)
@@ -97,7 +126,7 @@ final class AudioPipelineTests: XCTestCase {
             buffer.frameLength = buffer.frameCapacity
             let samples = try XCTUnwrap(buffer.floatChannelData?[0])
             for frame in 0..<Int(buffer.frameLength) {
-                samples[frame] = 0.2 * sin(Float(Double(frame) * 2 * .pi * 440 / rate))
+                samples[frame] = 0.2 * sin(Float(Double(frame) * 2 * .pi * Double(440 * (index + 1)) / rate))
             }
             var file: AVAudioFile? = try AVAudioFile(forWriting: url, settings: format.settings)
             try file?.write(from: buffer)
@@ -136,17 +165,34 @@ final class AudioPipelineTests: XCTestCase {
             let energy = (first..<(first + 480)).reduce(Float(0)) { $0 + abs(samples[$1]) } / 480
             XCTAssertGreaterThan(energy, 0.03, "Unexpected silence at frame \(first)")
         }
+        // Distinct frequencies identify the source segment at both ends and joins.
+        // Allow one AAC packet (1024 frames) around an edit boundary.
+        for time in [0.05, 1.55, 1.69, 3.55, 3.69, 5.15] {
+            let first = Int(time * 48_000)
+            let count = 2400
+            var crossings = 0
+            for frame in (first + 1)..<(first + count) {
+                if samples[frame - 1] <= 0 && samples[frame] > 0 { crossings += 1 }
+            }
+            let expected = Double(440 * (Int((time + 0.37) / 2) + 1))
+            XCTAssertEqual(Double(crossings) / 0.05, expected, accuracy: 40, "Wrong audio at \(time)s")
+        }
+        let tiny = directory.appendingPathComponent("tiny.m4a")
+        try await ClipExporter.exportCached(start: 1.991, end: 2.016, chunks: chunks, to: tiny)
+        let tinyDuration = try await AVURLAsset(url: tiny).load(.duration)
+        XCTAssertEqual(tinyDuration.seconds, 0.025, accuracy: 0.022)
         do {
             try await ClipExporter.exportCached(start: 0, end: 6, chunks: [chunks[0], chunks[2]],
                                                 to: directory.appendingPathComponent("gap.m4a"))
             XCTFail("Missing audio must fail passthrough.")
         } catch ClipError.missingAudio(let time) { XCTAssertEqual(time, 2, accuracy: 0.001) }
-        // A damaged disposable cache must not prevent exporting authoritative PCM.
+        // A damaged disposable cache is regenerated from authoritative PCM.
         try Data("damaged cache".utf8).write(to: EncodedAudioCache.url(for: chunks[0]), options: .atomic)
         let fallback = try await ClipExporter.export(start: 0.37, end: 1.61, words: [], chunks: chunks)
         defer { ClipExporter.removeFiles(fallback) }
         let fallbackDuration = try await AVURLAsset(url: fallback.audioURL).load(.duration)
         XCTAssertEqual(fallbackDuration.seconds, 1.24, accuracy: 0.05)
+        XCTAssertNoThrow(try AVAudioFile(forReading: EncodedAudioCache.url(for: chunks[0])))
     }
 
     @MainActor

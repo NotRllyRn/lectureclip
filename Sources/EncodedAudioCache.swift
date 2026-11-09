@@ -21,29 +21,44 @@ enum EncodedAudioCache {
 
     static func prepare(_ chunk: AudioChunk) async throws -> URL {
         try Task.checkCancellation()
-        let result: URL = try await withCheckedThrowingContinuation { continuation in
-            queue.async {
-                do { continuation.resume(returning: try encode(chunk)) }
-                catch { continuation.resume(throwing: error) }
+        // Capture never waits; exports wait cooperatively for the same bounded queue.
+        while slots.wait(timeout: .now()) != .success { try await Task.sleep(for: .milliseconds(20)) }
+        let cancellation = Cancellation()
+        let result: URL = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                queue.async {
+                    defer { slots.signal() }
+                    do { continuation.resume(returning: try encode(chunk, cancellation: cancellation)) }
+                    catch { continuation.resume(throwing: error) }
+                }
             }
-        }
+        } onCancel: { cancellation.cancel() }
         try Task.checkCancellation()
         return result
     }
 
     @discardableResult
-    private static func encode(_ chunk: AudioChunk) throws -> URL {
+    private static func encode(_ chunk: AudioChunk, cancellation: Cancellation? = nil) throws -> URL {
+        try cancellation?.check()
         let destination = url(for: chunk)
-        if FileManager.default.fileExists(atPath: destination.path) { return destination }
+        if FileManager.default.fileExists(atPath: destination.path) {
+            if let file = try? AVAudioFile(forReading: destination),
+               file.fileFormat.streamDescription.pointee.mFormatID == kAudioFormatMPEG4AAC,
+               abs(Double(file.length) / file.processingFormat.sampleRate - (chunk.end - chunk.start)) < 0.05 {
+                return destination
+            }
+            try FileManager.default.removeItem(at: destination)
+        }
         let temporary = destination.deletingLastPathComponent().appendingPathComponent("encode-\(UUID()).m4a")
         defer { try? FileManager.default.removeItem(at: temporary) }
         let source = try AVAudioFile(forReading: chunk.url)
         guard let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1),
               let converter = AVAudioConverter(from: source.processingFormat, to: format),
-              let input = AVAudioPCMBuffer(pcmFormat: source.processingFormat, frameCapacity: 8192),
               let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8192) else {
             throw CocoaError(.fileReadCorruptFile)
         }
+        converter.downmix = true
+        let input = try ConversionInput(source: source)
         // Keep memory bounded even if a legacy source contains an unusually long chunk.
         var writer: AVAudioFile? = try AVAudioFile(forWriting: temporary, settings: [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
@@ -52,20 +67,20 @@ enum EncodedAudioCache {
             AVEncoderBitRateKey: 64_000
         ])
         while true {
-            var readError: Error?
+            try cancellation?.check()
             var conversionError: NSError?
             let status = converter.convert(to: output, error: &conversionError) { count, state in
                 do {
-                    try source.read(into: input, frameCount: min(count, input.frameCapacity))
-                    state.pointee = input.frameLength == 0 ? .endOfStream : .haveData
-                    return input.frameLength == 0 ? nil : input
+                    try input.source.read(into: input.buffer, frameCount: min(count, input.buffer.frameCapacity))
+                    state.pointee = input.buffer.frameLength == 0 ? .endOfStream : .haveData
+                    return input.buffer.frameLength == 0 ? nil : input.buffer
                 } catch {
-                    readError = error
+                    input.error = error
                     state.pointee = .endOfStream
                     return nil
                 }
             }
-            if let readError { throw readError }
+            if let error = input.error { throw error }
             if let conversionError { throw conversionError }
             if status == .error { throw CocoaError(.fileReadCorruptFile) }
             if output.frameLength > 0 { try writer?.write(from: output) }
@@ -77,7 +92,33 @@ enum EncodedAudioCache {
             throw CocoaError(.fileReadCorruptFile)
         }
         try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: temporary.path)
+        try cancellation?.check()
         try FileManager.default.moveItem(at: temporary, to: destination)
         return destination
+    }
+
+    /// AVAudioConverter calls its Sendable input block synchronously. This state is
+    /// owned exclusively by one conversion on the serial encoding queue.
+    private final class ConversionInput: @unchecked Sendable {
+        let source: AVAudioFile
+        let buffer: AVAudioPCMBuffer
+        var error: Error?
+
+        init(source: AVAudioFile) throws {
+            self.source = source
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: source.processingFormat, frameCapacity: 8192) else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            self.buffer = buffer
+        }
+    }
+
+    private final class Cancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+        func cancel() { lock.withLock { cancelled = true } }
+        func check() throws {
+            if lock.withLock({ cancelled }) { throw CancellationError() }
+        }
     }
 }
