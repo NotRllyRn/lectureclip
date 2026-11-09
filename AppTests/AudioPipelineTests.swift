@@ -154,7 +154,8 @@ final class AudioPipelineTests: XCTestCase {
         }
         let output = directory.appendingPathComponent("passthrough.m4a")
         // Call the fast path directly: a PCM fallback must not mask failures.
-        try await ClipExporter.exportCached(start: 0.37, end: 5.61, chunks: chunks, to: output)
+        do { try await ClipExporter.exportCached(start: 0.37, end: 5.61, chunks: chunks, to: output) }
+        catch { XCTFail("Multi-chunk passthrough failed: \(error)"); return }
         let duration = try await AVURLAsset(url: output).load(.duration)
         XCTAssertEqual(duration.seconds, 5.24, accuracy: 0.05)
         let decoded = try AVAudioFile(forReading: output)
@@ -178,7 +179,8 @@ final class AudioPipelineTests: XCTestCase {
             XCTAssertEqual(Double(crossings) / 0.05, expected, accuracy: 40, "Wrong audio at \(time)s")
         }
         let tiny = directory.appendingPathComponent("tiny.m4a")
-        try await ClipExporter.exportCached(start: 1.991, end: 2.016, chunks: chunks, to: tiny)
+        do { try await ClipExporter.exportCached(start: 1.991, end: 2.016, chunks: chunks, to: tiny) }
+        catch { XCTFail("Tiny passthrough failed: \(error)"); return }
         let tinyDuration = try await AVURLAsset(url: tiny).load(.duration)
         XCTAssertEqual(tinyDuration.seconds, 0.025, accuracy: 0.022)
         do {

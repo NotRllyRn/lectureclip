@@ -67,14 +67,20 @@ enum EncodedAudioCache {
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: 48_000,
             AVNumberOfChannelsKey: 1,
-            AVEncoderBitRateKey: 64_000
+            AVEncoderBitRateKey: 64_000,
+            AVEncoderBitRateStrategyKey: AVAudioBitRateStrategy_Constant
         ])
         while true {
             try cancellation?.check()
             var conversionError: NSError?
             let status = converter.convert(to: output, error: &conversionError) { count, state in
                 do {
-                    try input.source.read(into: input.buffer, frameCount: min(count, input.buffer.frameCapacity))
+                    let remaining = input.source.length - input.source.framePosition
+                    guard remaining > 0 else {
+                        state.pointee = .endOfStream
+                        return nil
+                    }
+                    try input.source.read(into: input.buffer, frameCount: min(count, input.buffer.frameCapacity, AVAudioFrameCount(clamping: remaining)))
                     state.pointee = input.buffer.frameLength == 0 ? .endOfStream : .haveData
                     return input.buffer.frameLength == 0 ? nil : input.buffer
                 } catch {

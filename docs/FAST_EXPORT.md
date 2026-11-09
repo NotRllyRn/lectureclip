@@ -3,6 +3,13 @@
 ## Scope
 Pre-encode sealed recording chunks as mono 48 kHz AAC at 64 kbps. Export by composing immutable AAC segments with passthrough instead of normalizing and encoding the entire selection at tap time. Keep PCM as the authoritative recording/transcription source in this first change: deleting it safely is a separate storage migration, not required for faster export.
 
+## Status: not release-ready
+Local Xcode/simulator testing on the provided SSH Mac exposed two blockers:
+- Apple's M4A passthrough muxer rejects the multi-chunk edit with AVFoundation error -11838 / OSStatus -16976. The public export path falls back to PCM, so this does not deliver the intended speedup.
+- Using audio-only MP4 allows the export but the decoded output has a silent interval at a chunk join. Both the continuity regression and the resumed-recording boundary regression failed. That workaround was reverted; do not release it or weaken the tests.
+
+The encoder's EOF handling and explicit constant 64 kbps setting were fixed during these tests. The multi-chunk fast path still needs a different approach to AAC priming/edit boundaries before packaging a release. Merely normalizing bitrate metadata or adding preroll did not resolve the join issue in isolated Mac probes.
+
 ## Design
 - A small shared cache module owns serial encoding, bounded admission for capture and exports, atomic publication, and lazy regeneration. Capture never waits for encoding; exports wait cooperatively and can cancel between conversion buffers. Invalid caches are rebuilt. Cache files live beside their source and are removed with the lecture.
 - ChunkWriter schedules encoding only after closing and indexing a chunk. Both microphone and broadcast use this path.
