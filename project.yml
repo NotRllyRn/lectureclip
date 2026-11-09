@@ -69,6 +69,7 @@ targets:
         excludes: [Info.plist, Broadcast.entitlements]
       - path: Core
       - path: Sources/ChunkWriter.swift
+      - path: Sources/EncodedAudioCache.swift
       - path: Sources/SessionStore.swift
       - path: Sources/BroadcastState.swift
     info:

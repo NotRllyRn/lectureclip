@@ -89,6 +89,7 @@ final class ChunkWriter: @unchecked Sendable {
         self.url = nil
         currentFrames = 0
         try JSONEncoder().encode(finished).write(to: directory.appendingPathComponent("chunks.json"), options: .atomic)
+        if let chunk = finished.last { EncodedAudioCache.schedule(chunk) }
     }
 
     private func snapshotOnQueue() throws -> AudioSnapshot {
