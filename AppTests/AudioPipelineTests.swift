@@ -103,7 +103,8 @@ final class AudioPipelineTests: XCTestCase {
             try source?.write(from: buffer)
             source = nil
             let chunk = AudioChunk(id: UUID(), url: url, startFrame: 0, frameCount: 48_137, sampleRate: 48_000)
-            let encoded = try await EncodedAudioCache.prepare(chunk)
+            let encoded = directory.appendingPathComponent("stereo-\(activeChannel).m4a")
+            try await ClipExporter.exportCached(start: 0, end: chunk.end, chunks: [chunk], to: encoded)
             let file = try AVAudioFile(forReading: encoded)
             let audio = try AudioWindowReader.read(file, first: 0, count: AVAudioFrameCount(file.length))
             let samples = try XCTUnwrap(audio.floatChannelData?[0])
@@ -134,23 +135,43 @@ final class AudioPipelineTests: XCTestCase {
             chunks.append(AudioChunk(id: UUID(), url: url, startFrame: Int64(Double(index) * 2 * rate),
                                      frameCount: Int64(rate * 2), sampleRate: rate))
         }
-        for chunk in chunks {
-            let url = try await EncodedAudioCache.prepare(chunk)
-            let file = try AVAudioFile(forReading: url)
-            XCTAssertEqual(file.fileFormat.streamDescription.pointee.mFormatID, kAudioFormatMPEG4AAC)
-            XCTAssertEqual(file.processingFormat.sampleRate, 48_000)
-            XCTAssertEqual(file.processingFormat.channelCount, 1)
-            XCTAssertEqual(Double(file.length) / 48_000, 2, accuracy: 0.05)
-            let tracks = try await AVURLAsset(url: url).loadTracks(withMediaType: .audio)
+        // A live, continuous writer can export flushed fragments without closing.
+        EncodedAudioCache.schedule(chunks)
+        try await Task.sleep(for: .seconds(1))
+        let live = directory.appendingPathComponent("live.m4a")
+        try await ClipExporter.exportCached(start: 0.37, end: 4.61, chunks: chunks, to: live, finalize: false)
+        let liveDuration = try await AVURLAsset(url: live).load(.duration)
+        XCTAssertEqual(liveDuration.seconds, 4.24, accuracy: 0.05)
+        let liveFile = try AVAudioFile(forReading: live)
+        let liveAudio = try AudioWindowReader.read(liveFile, first: 0, count: AVAudioFrameCount(liveFile.length))
+        let liveSamples = try XCTUnwrap(liveAudio.floatChannelData?[0])
+        for first in stride(from: 480, to: Int(liveAudio.frameLength) - 480, by: 480) {
+            let energy = (first..<(first + 480)).reduce(Float(0)) { $0 + abs(liveSamples[$1]) } / 480
+            XCTAssertGreaterThan(energy, 0.03, "Silent live join at frame \(first)")
+        }
+        do {
+            let url = try await EncodedAudioCache.prepare(chunks, finalize: true)
+            let asset = AVURLAsset(url: url)
+            let duration = try await asset.load(.duration)
+            XCTAssertEqual(duration.seconds, 6, accuracy: 0.05)
+            let tracks = try await asset.loadTracks(withMediaType: .audio)
             let track = try XCTUnwrap(tracks.first)
+            let descriptions = try await track.load(.formatDescriptions)
+            let description = try XCTUnwrap(descriptions.first)
+            let format = try XCTUnwrap(CMAudioFormatDescriptionGetStreamBasicDescription(description)).pointee
+            XCTAssertEqual(format.mFormatID, kAudioFormatMPEG4AAC)
+            XCTAssertEqual(format.mSampleRate, 48_000)
+            XCTAssertEqual(format.mChannelsPerFrame, 1)
             let bitrate = try await track.load(.estimatedDataRate)
             XCTAssertEqual(bitrate, 64_000, accuracy: 16_000)
             let original = try Data(contentsOf: url)
-            let reused = try await EncodedAudioCache.prepare(chunk)
+            let reused = try await EncodedAudioCache.prepare(chunks, finalize: true)
             XCTAssertEqual(try Data(contentsOf: reused), original)
             try FileManager.default.removeItem(at: url)
-            let regenerated = try await EncodedAudioCache.prepare(chunk)
+            try FileManager.default.removeItem(at: reused)
+            let regenerated = try await EncodedAudioCache.prepare(chunks, finalize: true)
             XCTAssertTrue(FileManager.default.fileExists(atPath: regenerated.path))
+            try FileManager.default.removeItem(at: regenerated)
         }
         let output = directory.appendingPathComponent("passthrough.m4a")
         // Call the fast path directly: a PCM fallback must not mask failures.
@@ -188,13 +209,92 @@ final class AudioPipelineTests: XCTestCase {
                                                 to: directory.appendingPathComponent("gap.m4a"))
             XCTFail("Missing audio must fail passthrough.")
         } catch ClipError.missingAudio(let time) { XCTAssertEqual(time, 2, accuracy: 0.001) }
-        // A damaged disposable cache is regenerated from authoritative PCM.
-        try Data("damaged cache".utf8).write(to: EncodedAudioCache.url(for: chunks[0]), options: .atomic)
         let fallback = try await ClipExporter.export(start: 0.37, end: 1.61, words: [], chunks: chunks)
         defer { ClipExporter.removeFiles(fallback) }
         let fallbackDuration = try await AVURLAsset(url: fallback.audioURL).load(.duration)
         XCTAssertEqual(fallbackDuration.seconds, 1.24, accuracy: 0.05)
-        XCTAssertNoThrow(try AVAudioFile(forReading: EncodedAudioCache.url(for: chunks[0])))
+    }
+
+    @MainActor
+    func testLiveTailFallbackAndFinalizedCacheResume() async throws {
+        let session = try SessionStore.create()
+        let directory = SessionStore.directory(session.id)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var chunks = [try toneChunk(directory: directory, start: 0, seconds: 2, rate: 16_000)]
+        // No future samples exist to flush the final live fragment. Fast export
+        // must reject missing coverage; public export must preserve the entire tail.
+        do {
+            try await ClipExporter.exportCached(start: 0, end: 2, chunks: chunks,
+                to: directory.appendingPathComponent("unavailable.m4a"), finalize: false)
+            XCTFail("An unflushed tail must not be silently truncated")
+        } catch {}
+        let fallback = try await ClipExporter.export(start: 0, end: 2, words: [], chunks: chunks, recordingActive: true)
+        defer { ClipExporter.removeFiles(fallback) }
+        let tracks = try await AVURLAsset(url: fallback.audioURL).loadTracks(withMediaType: .audio)
+        let track = try XCTUnwrap(tracks.first)
+        let bitrate = try await track.load(.estimatedDataRate)
+        XCTAssertEqual(bitrate, 64_000, accuracy: 16_000)
+        let decoded = try AVAudioFile(forReading: fallback.audioURL)
+        XCTAssertEqual(decoded.fileFormat.streamDescription.pointee.mFormatID, kAudioFormatMPEG4AAC)
+        XCTAssertEqual(decoded.processingFormat.channelCount, 1)
+        XCTAssertEqual(Double(decoded.length) / decoded.processingFormat.sampleRate, 2, accuracy: 0.05)
+        let finalized = try await EncodedAudioCache.prepare(chunks, finalize: true)
+        try FileManager.default.removeItem(at: finalized)
+        chunks.append(try toneChunk(directory: directory, start: 2, seconds: 2, rate: 44_100))
+        let resumed = directory.appendingPathComponent("resumed.m4a")
+        try await ClipExporter.exportCached(start: 0, end: 4, chunks: chunks, to: resumed)
+        let file = try AVAudioFile(forReading: resumed)
+        let audio = try AudioWindowReader.read(file, first: 0, count: AVAudioFrameCount(file.length))
+        let samples = try XCTUnwrap(audio.floatChannelData?[0])
+        XCTAssertEqual(Double(file.length) / 48_000, 4, accuracy: 0.05)
+        for first in stride(from: 480, to: Int(audio.frameLength) - 480, by: 480) {
+            XCTAssertGreaterThan((first..<(first + 480)).reduce(Float(0)) { $0 + abs(samples[$1]) } / 480, 0.03)
+        }
+    }
+
+    @MainActor
+    func testWarmLongExportAndCancellationRecovery() async throws {
+        let session = try SessionStore.create()
+        let directory = SessionStore.directory(session.id)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let chunks = try (0..<24).map { try toneChunk(directory: directory, start: Double($0) * 5, seconds: 5, rate: 16_000) }
+        let cancelled = Task { try await EncodedAudioCache.prepare(chunks, finalize: true) }
+        cancelled.cancel()
+        do {
+            let unexpected = try await cancelled.value
+            try? FileManager.default.removeItem(at: unexpected)
+            XCTFail("Cancelled cache preparation should throw")
+        } catch is CancellationError {}
+        let coldStart = Date()
+        let cache = try await EncodedAudioCache.prepare(chunks, finalize: true)
+        let coldSeconds = Date().timeIntervalSince(coldStart)
+        try FileManager.default.removeItem(at: cache)
+        let began = Date()
+        let output = directory.appendingPathComponent("long.m4a")
+        try await ClipExporter.exportCached(start: 0.37, end: 119.61, chunks: chunks, to: output)
+        print("AAC benchmark: 120s pre-encode \(coldSeconds)s, warm 119.24s export \(Date().timeIntervalSince(began))s")
+        let duration = try await AVURLAsset(url: output).load(.duration)
+        XCTAssertEqual(duration.seconds, 119.24, accuracy: 0.05)
+        let file = try AVAudioFile(forReading: output)
+        let audio = try AudioWindowReader.read(file, first: 0, count: AVAudioFrameCount(file.length))
+        let samples = try XCTUnwrap(audio.floatChannelData?[0])
+        for first in stride(from: 480, to: Int(audio.frameLength) - 480, by: 480) {
+            XCTAssertGreaterThan((first..<(first + 480)).reduce(Float(0)) { $0 + abs(samples[$1]) } / 480, 0.03)
+        }
+    }
+
+    private func toneChunk(directory: URL, start: Double, seconds: Double, rate: Double) throws -> AudioChunk {
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(seconds * rate)))
+        buffer.frameLength = buffer.frameCapacity
+        let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+        for frame in 0..<Int(buffer.frameLength) { samples[frame] = 0.2 * sin(Float(Double(frame) * 2 * .pi * 440 / rate)) }
+        let url = directory.appendingPathComponent("tone-\(UUID()).caf")
+        var file: AVAudioFile? = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file?.write(from: buffer)
+        file = nil
+        return AudioChunk(id: UUID(), url: url, startFrame: Int64((start * rate).rounded()),
+                          frameCount: Int64(buffer.frameLength), sampleRate: rate)
     }
 
     @MainActor

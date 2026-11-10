@@ -6,8 +6,9 @@ struct ClipExporter {
     /// Export any continuous time range using ONLY finalized chunks. Recording
     /// remains active in the recorder during this whole operation.
     static func export(start: TimeInterval, end: TimeInterval,
-                       words: [TranscriptWord], chunks: [AudioChunk], title: String? = nil) async throws -> ExportedClip {
-        guard start >= 0, end - start >= 0.025 else { throw ClipError.invalidRange }
+                       words: [TranscriptWord], chunks: [AudioChunk], title: String? = nil,
+                       recordingActive: Bool = false) async throws -> ExportedClip {
+        guard start >= 0, end - start >= 0.025 - 1e-9 else { throw ClipError.invalidRange }
         let outputDirectory = FileManager.default.urls(
             for: .documentDirectory, in: .userDomainMask
         )[0].appendingPathComponent("Exports", isDirectory: true)
@@ -18,7 +19,7 @@ struct ClipExporter {
         let transcriptURL = outputDirectory.appendingPathComponent(name + ".txt")
         let began = Date()
         do {
-            try await exportCached(start: start, end: end, chunks: chunks, to: audioURL)
+            try await exportCached(start: start, end: end, chunks: chunks, to: audioURL, finalize: !recordingActive)
             Diagnostics.record("AAC passthrough export: \(end - start)s audio in \(Date().timeIntervalSince(began))s")
         } catch {
             try? FileManager.default.removeItem(at: audioURL)
@@ -46,34 +47,46 @@ struct ClipExporter {
                             text: transcriptText, start: start, end: end)
     }
 
-    static func exportCached(start: Double, end: Double, chunks: [AudioChunk], to url: URL) async throws {
-        guard start >= 0, end - start >= 0.025 else { throw ClipError.invalidRange }
-        let composition = AVMutableComposition()
-        guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-            throw ClipError.cannotCreateComposition
+    static func exportCached(start: Double, end: Double, chunks: [AudioChunk], to url: URL, finalize: Bool = true) async throws {
+        guard start >= 0, end - start >= 0.025 - 1e-9 else { throw ClipError.invalidRange }
+        let ordered = chunks.sorted { $0.start < $1.start }
+        var cursor = 0.0
+        for chunk in ordered {
+            guard abs(chunk.start - cursor) < 0.001 else { throw ClipError.missingAudio(at: cursor) }
+            cursor = chunk.end
         }
-        var cursor = start
-        for chunk in chunks.sorted(by: { $0.start < $1.start }) where chunk.end > start && chunk.start < end {
-            let lower = max(cursor, chunk.start)
-            let upper = min(end, chunk.end)
-            guard lower <= cursor + 0.001 else { throw ClipError.missingAudio(at: cursor) }
-            guard upper > lower else { continue }
-            let asset = AVURLAsset(url: try await EncodedAudioCache.prepare(chunk))
-            guard let source = try await asset.loadTracks(withMediaType: .audio).first else {
-                throw ClipError.cannotCreateComposition
-            }
-            let range = CMTimeRange(start: CMTime(seconds: lower - chunk.start, preferredTimescale: 48_000),
-                                    duration: CMTime(seconds: upper - lower, preferredTimescale: 48_000))
-            try track.insertTimeRange(range, of: source, at: CMTime(seconds: lower - start, preferredTimescale: 48_000))
-            cursor = upper
+        guard end <= cursor + 0.001 else { throw ClipError.missingAudio(at: cursor) }
+        var snapshot = try await EncodedAudioCache.prepare(ordered, finalize: finalize)
+        defer { try? FileManager.default.removeItem(at: snapshot) }
+        try Task.checkCancellation()
+        var asset = AVURLAsset(url: snapshot)
+        var available = try await audioRange(asset)
+        // append() submits PCM asynchronously. Briefly allow already-submitted
+        // fragments to settle, but never wait indefinitely for a live tail.
+        for _ in 0..<6 where !finalize && end > available.end.seconds + 0.001 {
+            try await Task.sleep(for: .milliseconds(50))
+            try FileManager.default.removeItem(at: snapshot)
+            snapshot = try await EncodedAudioCache.prepare(ordered, finalize: false)
+            asset = AVURLAsset(url: snapshot)
+            available = try await audioRange(asset)
         }
-        guard cursor >= end - 0.001 else { throw ClipError.missingAudio(at: cursor) }
-        guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else {
+        // Live fragments lag submitted PCM. Never silently trim the requested tail.
+        guard start >= available.start.seconds - 0.001, end <= available.end.seconds + 0.001 else {
+            throw ClipError.missingAudio(at: available.end.seconds)
+        }
+        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
             throw ClipError.cannotCreateExportSession
         }
+        session.timeRange = CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 48_000),
+                                       end: CMTime(seconds: end, preferredTimescale: 48_000))
         try await session.export(to: url, as: .m4a)
         let duration = try await AVURLAsset(url: url).load(.duration).seconds
         guard abs(duration - (end - start)) < 0.05 else { throw ClipError.cannotCreateComposition }
+    }
+
+    private static func audioRange(_ asset: AVURLAsset) async throws -> CMTimeRange {
+        guard let track = try await asset.loadTracks(withMediaType: .audio).first else { throw ClipError.cannotCreateComposition }
+        return try await track.load(.timeRange)
     }
 
     private static func exportPCM(start: Double, end: Double, chunks: [AudioChunk], to url: URL) async throws {
@@ -83,7 +96,14 @@ struct ClipExporter {
             try prepareAudio(start: start, end: end, chunks: chunks, to: preparedURL)
         }
         try await withTaskCancellationHandler { try await preparation.value } onCancel: { preparation.cancel() }
-        guard let session = AVAssetExportSession(asset: AVURLAsset(url: preparedURL), presetName: AVAssetExportPresetAppleM4A) else {
+        let source = try AVAudioFile(forReading: preparedURL)
+        let chunk = AudioChunk(id: UUID(), url: preparedURL, startFrame: 0, frameCount: source.length,
+                               sampleRate: source.processingFormat.sampleRate)
+        // A one-off encoder preserves the warm live cache, and guarantees the
+        // same 64 kbps settings even when a live fragment does not cover the tail.
+        let encoded = try await EncodedAudioCache.prepare([chunk], finalize: true, reuse: false)
+        defer { try? FileManager.default.removeItem(at: encoded) }
+        guard let session = AVAssetExportSession(asset: AVURLAsset(url: encoded), presetName: AVAssetExportPresetPassthrough) else {
             throw ClipError.cannotCreateExportSession
         }
         session.timeRange = CMTimeRange(start: .zero, duration: CMTime(seconds: end - start, preferredTimescale: 48_000))

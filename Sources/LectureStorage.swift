@@ -80,6 +80,7 @@ enum LectureStorage {
         }
         let folder = SessionStore.directory(session.id)
         try removeIfPresent(folder)
+        EncodedAudioCache.discard(directory: folder)
     }
 }
 

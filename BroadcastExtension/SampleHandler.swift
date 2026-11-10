@@ -48,7 +48,7 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
                 if let format, !format.isEqual(incomingFormat) { throw BroadcastError.formatChanged }
                 if writer == nil {
                     format = incomingFormat
-                    writer = ChunkWriter(format: incomingFormat, directory: SessionStore.directory(sessionID)) { [weak self] message in
+                    writer = ChunkWriter(format: incomingFormat, directory: SessionStore.directory(sessionID), preencode: false) { [weak self] message in
                         DispatchQueue.global().async { [weak self] in
                             self?.fail(NSError(domain: "LectureClip.Broadcast", code: 1, userInfo: [NSLocalizedDescriptionKey: message]))
                         }

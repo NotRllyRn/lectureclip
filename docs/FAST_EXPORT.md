@@ -1,24 +1,27 @@
 # Fast audio export
 
-## Scope
-Pre-encode sealed recording chunks as mono 48 kHz AAC at 64 kbps. Export by composing immutable AAC segments with passthrough instead of normalizing and encoding the entire selection at tap time. Keep PCM as the authoritative recording/transcription source in this first change: deleting it safely is a separate storage migration, not required for faster export.
-
-## Status: not release-ready
-Local Xcode/simulator testing on the provided SSH Mac exposed two blockers:
-- Apple's M4A passthrough muxer rejects the multi-chunk edit with AVFoundation error -11838 / OSStatus -16976. The public export path falls back to PCM, so this does not deliver the intended speedup.
-- Using audio-only MP4 allows the export but the decoded output has a silent interval at a chunk join. Both the continuity regression and the resumed-recording boundary regression failed. That workaround was reverted; do not release it or weaken the tests.
-
-The encoder's EOF handling and explicit constant 64 kbps setting were fixed during these tests. The multi-chunk fast path still needs a different approach to AAC priming/edit boundaries before packaging a release. Merely normalizing bitrate metadata or adding preroll did not resolve the join issue in isolated Mac probes.
-
 ## Design
-- A small shared cache module owns serial encoding, bounded admission for capture and exports, atomic publication, and lazy regeneration. Capture never waits for encoding; exports wait cooperatively and can cancel between conversion buffers. Invalid caches are rebuilt. Cache files live beside their source and are removed with the lecture.
-- ChunkWriter schedules encoding only after closing and indexing a chunk. Both microphone and broadcast use this path.
-- Export fills missing cache entries, checks continuous coverage, and composes the requested time ranges into a standalone M4A using passthrough. Existing PCM export remains a fallback for codec/container failures. Cancellation is not retried.
-- Original frame indices and Quick Export cursor semantics remain unchanged. Never concatenate raw M4A bytes or mutate files already shared.
-- Reduce fallback scanning by passing only intersecting chunks to each window reader.
+- Preserve PCM chunks and `chunks.json` as the authoritative recording/transcription source. This update improves export latency; it does not delete original recordings to save space.
+- Feed sealed chunks into **one continuous mono 48 kHz, 64 kbps AAC encoder**, on a serial utility queue. Independent AAC files introduce encoder priming at every join and are not a reliable gap-free export source.
+- The encoder writes a fragmented QuickTime cache with one-second fragment intervals. Container fragments do not restart the encoder. Timestamp buffers from an integer frame clock; normalize each source-rate boundary to the absolute recording timeline.
+- Capture never waits for encoding. Admission is bounded; each admitted snapshot contains the full chunk index, so the next job catches up on any skipped chunks. Only one session's cache is retained per process.
+- Export takes an immutable APFS clone (copy fallback), validates the audio track's available range, then trims the single continuous asset into a standalone M4A using passthrough. No decoding/re-encoding is needed for a warm, covered selection.
+- Submitted PCM is not necessarily flushed media. Briefly retry an incomplete live snapshot (at most 300 ms), then fall back to PCM if the requested tail is unavailable. Never silently truncate audio or advance the export cursor past missing audio.
+- Stopped exports finalize the encoder to include its exact tail. Resuming after finalization rebuilds the cache once from PCM. Repeated exports from an unchanged finalized cache reuse it.
+- The fallback normalizes bounded PCM windows and uses a separate, explicit 64 kbps AAC encoder; it does not evict the warm live cache.
+- The main app owns the cache. The broadcast extension only writes PCM; the app prewarms its cache as it observes shared recording snapshots. If the app was suspended during a broadcast, it must catch up on first export.
+- Cache snapshots are removed after export. The active temporary cache is removed on session switch/deletion; stale temporary files from an interrupted process are cleaned on next cache use. Existing exported files are never mutated.
 
-## Verification
-Add Apple-platform integration tests for AAC format/bitrate, multi-chunk partial-range export, missing audio, cache reuse and missing-cache regeneration. Test on a physical device: 60–90-minute recording, background/broadcast capture, interruptions, AAC segment joins (priming/padding), partial cuts, export duration, and wall-clock latency. Linux cannot execute AVFoundation tests.
+## Validation
+Apple-platform integration tests cover:
+- AAC codec, mono format, 64 kbps target, and duration;
+- decoded audio continuity across source chunks and sample-rate changes;
+- live snapshots, finalized output, non-packet-aligned cuts, and a 25 ms selection;
+- an unavailable live tail through the public fallback path;
+- finalized-cache reuse and rebuilding after resume;
+- cancellation recovery, missing audio, and a warm two-minute export.
 
-## Tradeoffs
-The cache temporarily adds roughly 29 MB/hour rather than reducing PCM storage. Legacy recordings encode on first export. Background backlog and file copying mean latency is not guaranteed instant. Independent AAC segments require device validation for audible joins and edit-list handling by receiving apps. The legacy PCM fallback retains Apple's M4A preset rather than guaranteeing 64 kbps; the prepared cache/passthrough path explicitly requests 64 kbps.
+The initial independent-segment prototype was rejected by these tests: M4A passthrough failed with -11838/-16976, while an MP4 workaround inserted silence at joins. The continuous encoder replaces that design rather than weakening the continuity assertions.
+
+## Limits
+The cache adds about 29 MB/hour plus container overhead while preserving PCM. File export still scales with selected compressed bytes; instant export is not guaranteed. Cold sessions, app relaunch, broadcast catch-up, resume after finalization, or an unflushed tail can require encoding. Long-duration background behavior, receiving-app compatibility, battery/thermal impact and latency on an actual iPad still require device acceptance testing.

@@ -7,6 +7,7 @@ final class ChunkWriter: @unchecked Sendable {
     private let slots = DispatchSemaphore(value: 32)
     private let format: AVAudioFormat
     private let directory: URL
+    private let preencode: Bool
     private var totalFrames: Int64 = 0
     private var currentFrames: Int64 = 0
     private var file: AVAudioFile?
@@ -15,9 +16,10 @@ final class ChunkWriter: @unchecked Sendable {
     private var failure: Error?
     private let onFailure: @Sendable (String) -> Void
 
-    init(format: AVAudioFormat, directory: URL, existing: AudioSnapshot = AudioSnapshot(chunks: [], duration: 0), onFailure: @escaping @Sendable (String) -> Void) {
+    init(format: AVAudioFormat, directory: URL, existing: AudioSnapshot = AudioSnapshot(chunks: [], duration: 0), preencode: Bool = true, onFailure: @escaping @Sendable (String) -> Void) {
         self.format = format
         self.directory = directory
+        self.preencode = preencode
         finished = existing.chunks
         totalFrames = Int64((existing.duration * format.sampleRate).rounded())
         self.onFailure = onFailure
@@ -89,7 +91,7 @@ final class ChunkWriter: @unchecked Sendable {
         self.url = nil
         currentFrames = 0
         try JSONEncoder().encode(finished).write(to: directory.appendingPathComponent("chunks.json"), options: .atomic)
-        if let chunk = finished.last { EncodedAudioCache.schedule(chunk) }
+        if preencode { EncodedAudioCache.schedule(finished) }
     }
 
     private func snapshotOnQueue() throws -> AudioSnapshot {

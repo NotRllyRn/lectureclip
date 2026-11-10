@@ -426,6 +426,9 @@ final class LectureStore: ObservableObject {
                 do {
                     if let state = try? BroadcastStorage.read(BroadcastStatus.self, name: "status.json"), state.sessionID == id {
                         self.snapshot = try SessionStore.snapshot(id)
+                        // The app owns its cache; the resource-limited broadcast
+                        // extension only preserves PCM in the shared container.
+                        EncodedAudioCache.schedule(self.snapshot.chunks)
                         self.isRecording = state.isLive
                         self.status = state.message ?? (state.isLive
                             ? "System audio recording. Stop through the system broadcast controls."
@@ -507,7 +510,8 @@ final class LectureStore: ObservableObject {
                 : (start! ..< min(end ?? snapshot.duration, snapshot.duration))
             let clip = try await ClipExporter.export(start: range.lowerBound, end: range.upperBound,
                                                       words: words, chunks: snapshot.chunks,
-                                                      title: "\(current.displayTitle) \(clockString(range.lowerBound))–\(clockString(range.upperBound))")
+                                                      title: "\(current.displayTitle) \(clockString(range.lowerBound))–\(clockString(range.upperBound))",
+                                                      recordingActive: isRecordingActive)
             // Merge into fresh metadata; recognition/automatic notes may have advanced.
             guard var updated = session, updated.id == id else { ClipExporter.removeFiles(clip); return false }
             if quick { updated.timeline.quickExportCursor = range.upperBound }
